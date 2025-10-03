@@ -30,10 +30,10 @@ impl WhisperTranscriber {
         // Setup transcription parameters
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
-        // Configure for high quality transcription
-        params.set_n_threads(4);
+        // Optimization: Use more threads for faster processing
+        params.set_n_threads(8); // Increased from 4 to 8 for better CPU utilization
         params.set_translate(false);
-        params.set_language(Some("en"));
+        params.set_language(Some("en")); // Skip language detection for speed
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
