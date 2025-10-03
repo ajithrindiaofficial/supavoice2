@@ -428,18 +428,18 @@ async fn start_recording(duration: u64) -> Result<String, String> {
 
 #[tauri::command]
 async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Result<String, String> {
-    // Try models in order: whisper-small-en, whisper-small, whisper-base-en
-    let model_id = if let Ok(model) = state.registry.get_model("whisper-small-en").await {
+    // Priority order: whisper-base-en (fastest), small-en, small (multilingual)
+    let model_id = if let Ok(model) = state.registry.get_model("whisper-base-en").await {
         if model.path.is_some() {
-            "whisper-small-en"
-        } else if let Ok(model) = state.registry.get_model("whisper-small").await {
+            "whisper-base-en"
+        } else if let Ok(model) = state.registry.get_model("whisper-small-en").await {
             if model.path.is_some() {
-                "whisper-small"
+                "whisper-small-en"
             } else {
-                "whisper-base-en"
+                "whisper-small"
             }
         } else {
-            "whisper-base-en"
+            "whisper-small"
         }
     } else {
         "whisper-base-en"
@@ -505,14 +505,15 @@ fn main() {
     std::thread::spawn(move || {
         println!("🚀 Preloading Whisper model in background...");
 
-        // Try to find an installed model
+        // Prioritize whisper-base-en (fastest), then small-en, then others
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let model_id = runtime.block_on(async {
-            if let Ok(model) = registry_clone.get_model("whisper-small-en").await {
-                if model.path.is_some() { return Some("whisper-small-en"); }
-            }
+            // Priority order: base-en (3x faster) > small-en > small
             if let Ok(model) = registry_clone.get_model("whisper-base-en").await {
                 if model.path.is_some() { return Some("whisper-base-en"); }
+            }
+            if let Ok(model) = registry_clone.get_model("whisper-small-en").await {
+                if model.path.is_some() { return Some("whisper-small-en"); }
             }
             if let Ok(model) = registry_clone.get_model("whisper-small").await {
                 if model.path.is_some() { return Some("whisper-small"); }
@@ -523,6 +524,7 @@ fn main() {
         if let Some(id) = model_id {
             if let Ok(model) = runtime.block_on(registry_clone.get_model(id)) {
                 if let Some(path) = model.path {
+                    println!("📦 Loading model: {}", id);
                     match WhisperTranscriber::new(path) {
                         Ok(transcriber) => {
                             *cache_clone.lock().unwrap() = Some(transcriber);
