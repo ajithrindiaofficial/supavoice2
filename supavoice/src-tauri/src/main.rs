@@ -15,6 +15,8 @@ use tauri::{
 use tauri_plugin_sql::{Migration, MigrationKind};
 use transcription::WhisperTranscriber;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
 
 #[cfg(target_os = "macos")]
 fn set_window_above_fullscreen(window: &tauri::WebviewWindow) {
@@ -252,11 +254,19 @@ fn apply_window_vibrancy(window: tauri::WebviewWindow) -> Result<(), String> {
     }
 }
 
+// Recording state
+struct RecordingState {
+    path: PathBuf,
+    stop_flag: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
 // App state for model management
 struct AppState {
     registry: Arc<ModelRegistry>,
     downloader: Arc<ModelDownloader>,
     transcriber_cache: Arc<Mutex<Option<WhisperTranscriber>>>,
+    recording: Arc<Mutex<Option<RecordingState>>>,
 }
 
 #[tauri::command]
@@ -331,8 +341,69 @@ async fn get_disk_space() -> Result<u64, String> {
 }
 
 #[tauri::command]
+async fn start_recording_toggle(state: State<'_, AppState>) -> Result<(), String> {
+    let desktop_dir = dirs::home_dir()
+        .ok_or("Could not find home directory")?
+        .join("Desktop");
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let audio_path = desktop_dir.join(format!("supavoice_recording_{}.wav", timestamp));
+
+    println!("📍 Starting recording to: {:?}", audio_path);
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_flag_clone = stop_flag.clone();
+    let path_clone = audio_path.clone();
+
+    let thread = std::thread::spawn(move || {
+        let recorder = AudioRecorder::new();
+        // No max duration - record until stopped
+        if let Err(e) = recorder.record_to_file_cancellable(path_clone, None, stop_flag_clone) {
+            eprintln!("❌ Recording error: {}", e);
+        }
+    });
+
+    let mut recording = state.recording.lock().unwrap();
+    *recording = Some(RecordingState {
+        path: audio_path,
+        stop_flag,
+        thread: Some(thread),
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_recording(state: State<'_, AppState>) -> Result<String, String> {
+    let mut recording_guard = state.recording.lock().unwrap();
+
+    if let Some(mut rec_state) = recording_guard.take() {
+        println!("⏹️  Stopping recording...");
+
+        // Signal to stop
+        rec_state.stop_flag.store(true, Ordering::Relaxed);
+
+        // Drop the lock before joining
+        drop(recording_guard);
+
+        // Wait for thread to finish
+        if let Some(thread) = rec_state.thread.take() {
+            thread.join().map_err(|_| "Failed to join recording thread".to_string())?;
+        }
+
+        println!("✅ Recording saved: {:?}", rec_state.path);
+        Ok(rec_state.path.to_string_lossy().to_string())
+    } else {
+        Err("No active recording".to_string())
+    }
+}
+
+// Keep old command for backwards compatibility
+#[tauri::command]
 async fn start_recording(duration: u64) -> Result<String, String> {
-    // Save to Desktop for easy access
     let desktop_dir = dirs::home_dir()
         .ok_or("Could not find home directory")?
         .join("Desktop");
@@ -470,6 +541,7 @@ fn main() {
         registry,
         downloader,
         transcriber_cache,
+        recording: Arc::new(Mutex::new(None)),
     };
 
     tauri::Builder::default()
@@ -569,6 +641,8 @@ fn main() {
             delete_model,
             get_disk_space,
             start_recording,
+            start_recording_toggle,
+            stop_recording,
             transcribe_audio
         ])
         .run(tauri::generate_context!())

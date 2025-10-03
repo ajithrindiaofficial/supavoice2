@@ -4,6 +4,7 @@ use cpal::{FromSample, Sample};
 use hound::{WavSpec, WavWriter};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct AudioRecorder {
     sample_rate: u32,
@@ -17,6 +18,11 @@ impl AudioRecorder {
     }
 
     pub fn record_to_file(&self, output_path: PathBuf, duration_secs: u64) -> Result<()> {
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        self.record_to_file_cancellable(output_path, Some(duration_secs), stop_flag)
+    }
+
+    pub fn record_to_file_cancellable(&self, output_path: PathBuf, max_duration_secs: Option<u64>, stop_flag: Arc<AtomicBool>) -> Result<()> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -49,8 +55,21 @@ impl AudioRecorder {
 
         stream.play()?;
 
-        // Record for specified duration
-        std::thread::sleep(std::time::Duration::from_secs(duration_secs));
+        // Record until stop flag is set or max duration is reached
+        let start = std::time::Instant::now();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            if stop_flag.load(Ordering::Relaxed) {
+                break;
+            }
+
+            if let Some(max_duration) = max_duration_secs {
+                if start.elapsed().as_secs() >= max_duration {
+                    break;
+                }
+            }
+        }
 
         drop(stream);
 

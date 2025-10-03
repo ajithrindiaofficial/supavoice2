@@ -45,23 +45,26 @@ function App() {
 
   const handleRecord = async () => {
     try {
-      setIsRecording(true);
-      setTranscript("");
-      setError(null);
+      if (isRecording) {
+        // Stop recording
+        const audioPath = await invoke<string>("stop_recording");
+        setIsRecording(false);
+        setIsTranscribing(true);
 
-      // Record for 10 seconds
-      const audioPath = await invoke<string>("start_recording", { duration: 10 });
+        // Transcribe the audio
+        const result = await invoke<string>("transcribe_audio", {
+          audioPath,
+        });
 
-      setIsRecording(false);
-      setIsTranscribing(true);
-
-      // Transcribe the audio
-      const result = await invoke<string>("transcribe_audio", {
-        audioPath,
-      });
-
-      setTranscript(result);
-      setIsTranscribing(false);
+        setTranscript(result);
+        setIsTranscribing(false);
+      } else {
+        // Start recording
+        setIsRecording(true);
+        setTranscript("");
+        setError(null);
+        await invoke("start_recording_toggle");
+      }
     } catch (error) {
       console.error("Recording/transcription failed:", error);
       setIsRecording(false);
@@ -100,7 +103,7 @@ function App() {
 
                 <button
                   onClick={handleRecord}
-                  disabled={isRecording || isTranscribing}
+                  disabled={isTranscribing}
                   className={`w-24 h-24 rounded-full flex items-center justify-center transition-all ${
                     isRecording
                       ? "bg-red-500 animate-pulse"
@@ -118,10 +121,10 @@ function App() {
 
                 <p className="mt-4 text-sm text-muted-foreground">
                   {isRecording
-                    ? `Recording... ${recordingTime}s / 10s`
+                    ? `Recording... ${recordingTime}s (click to stop)`
                     : isTranscribing
-                    ? "Transcribing with Candle-Whisper..."
-                    : "Click to record (10 seconds)"}
+                    ? "Transcribing with Whisper..."
+                    : "Click to start recording"}
                 </p>
 
                 {error && (
