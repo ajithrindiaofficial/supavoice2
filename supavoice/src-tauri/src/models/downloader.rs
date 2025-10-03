@@ -33,9 +33,18 @@ impl ModelDownloader {
         let model_kind = model.kind.clone();
         let model_path = self.registry.get_model_path(&model_id);
 
-        // Create directory if it doesn't exist
-        if let Some(parent) = model_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+        // For Whisper models, create a directory structure
+        // For LLM models, just ensure parent directory exists
+        if matches!(model_kind, ModelKind::Whisper) {
+            // Create the whisper model directory
+            if let Some(parent) = model_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+        } else {
+            // For LLM, just create parent directory
+            if let Some(parent) = model_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
         }
 
         // Download main model file

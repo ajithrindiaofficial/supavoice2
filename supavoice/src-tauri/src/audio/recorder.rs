@@ -76,22 +76,34 @@ impl AudioRecorder {
         let sample_rate = config.sample_rate.0;
         let target_sample_rate = self.sample_rate;
 
+        // Calculate resampling ratio
+        let resample_ratio = sample_rate as f64 / target_sample_rate as f64;
+        let sample_index = Arc::new(Mutex::new(0.0f64));
+
         let stream = device.build_input_stream(
             config,
             move |data: &[T], _: &cpal::InputCallbackInfo| {
                 if let Ok(mut guard) = writer.try_lock() {
                     if let Some(writer) = guard.as_mut() {
-                        // Resample and convert to mono if needed
+                        let mut index = sample_index.lock().unwrap();
+
+                        // Process frames and resample
                         for frame in data.chunks(channels) {
                             // Average channels to mono
                             let mono_sample: f32 = frame.iter()
                                 .map(|s| s.to_float_sample().to_sample::<f32>())
                                 .sum::<f32>() / channels as f32;
 
-                            // Simple resampling (basic decimation/interpolation)
-                            // For production, use a proper resampling library
-                            let sample: i16 = (mono_sample * i16::MAX as f32) as i16;
-                            let _ = writer.write_sample(sample);
+                            // Only write sample when we've accumulated enough input samples
+                            if *index >= 1.0 {
+                                *index -= 1.0;
+
+                                // Convert to i16 and write
+                                let sample: i16 = (mono_sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                                let _ = writer.write_sample(sample);
+                            }
+
+                            *index += 1.0 / resample_ratio;
                         }
                     }
                 }

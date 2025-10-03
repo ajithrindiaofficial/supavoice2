@@ -330,26 +330,41 @@ async fn get_disk_space() -> Result<u64, String> {
 
 #[tauri::command]
 async fn start_recording(duration: u64) -> Result<String, String> {
-    let temp_dir = std::env::temp_dir();
+    // Save to Desktop for easy access
+    let desktop_dir = dirs::home_dir()
+        .ok_or("Could not find home directory")?
+        .join("Desktop");
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let audio_path = temp_dir.join(format!("recording_{}.wav", timestamp));
+    let audio_path = desktop_dir.join(format!("supavoice_recording_{}.wav", timestamp));
+
+    println!("Recording to: {:?}", audio_path);
 
     let recorder = AudioRecorder::new();
     recorder
         .record_to_file(audio_path.clone(), duration)
         .map_err(|e| e.to_string())?;
 
+    println!("Recording saved successfully!");
+
     Ok(audio_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Result<TranscriptionResult, String> {
+    // Try to use whisper-small (multilingual) first, fallback to whisper-small-en
+    let model_id = if state.registry.get_model("whisper-small").await.is_ok() {
+        "whisper-small"
+    } else {
+        "whisper-small-en"
+    };
+
     let model = state
         .registry
-        .get_model("whisper-small-en")
+        .get_model(model_id)
         .await
         .map_err(|e| e.to_string())?;
 

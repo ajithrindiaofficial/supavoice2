@@ -147,6 +147,19 @@ impl WhisperTranscriber {
     }
 
     fn audio_to_mel(&self, audio: &[f32], config: &Config, device: &Device) -> Result<Tensor> {
+        // Whisper expects exactly 30 seconds of audio (480,000 samples at 16kHz)
+        const MAX_SAMPLES: usize = 480000; // 30 seconds * 16000 Hz
+
+        // Pad or trim audio to exactly 30 seconds
+        let mut padded_audio = audio.to_vec();
+        if padded_audio.len() < MAX_SAMPLES {
+            // Pad with zeros
+            padded_audio.resize(MAX_SAMPLES, 0.0);
+        } else if padded_audio.len() > MAX_SAMPLES {
+            // Trim to 30 seconds
+            padded_audio.truncate(MAX_SAMPLES);
+        }
+
         // Load mel filterbank based on config
         let mel_bytes = match config.num_mel_bins {
             80 => include_bytes!("melfilters.bytes").as_slice(),
@@ -158,7 +171,7 @@ impl WhisperTranscriber {
         byteorder::LittleEndian::read_f32_into(mel_bytes, &mut mel_filters);
 
         // Convert PCM to mel spectrogram
-        let mel = m::audio::pcm_to_mel(config, audio, &mel_filters);
+        let mel = m::audio::pcm_to_mel(config, &padded_audio, &mel_filters);
         let mel_len = mel.len();
         let mel = Tensor::from_vec(
             mel,

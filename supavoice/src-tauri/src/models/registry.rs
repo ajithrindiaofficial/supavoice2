@@ -96,7 +96,14 @@ impl ModelRegistry {
 
         // Check for existing models on disk and update status
         for (id, model) in models.iter_mut() {
-            let model_path = base_path.join(id);
+            let model_path = if id.starts_with("whisper") {
+                // Whisper models are in directories with model.safetensors
+                base_path.join(id).join("model.safetensors")
+            } else {
+                // LLM models are direct files
+                base_path.join(id)
+            };
+
             if model_path.exists() {
                 model.status = ModelStatus::Installed;
                 model.path = Some(model_path.clone());
@@ -143,7 +150,13 @@ impl ModelRegistry {
     }
 
     pub fn get_model_path(&self, id: &str) -> PathBuf {
-        self.base_path.join(id)
+        // For Whisper models, return path to model.safetensors inside a directory
+        // For LLM models, return direct file path
+        if id.starts_with("whisper") {
+            self.base_path.join(id).join("model.safetensors")
+        } else {
+            self.base_path.join(id)
+        }
     }
 
     pub fn get_base_path(&self) -> &PathBuf {
