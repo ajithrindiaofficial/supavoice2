@@ -1,8 +1,11 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio;
 mod models;
+mod transcription;
 
+use audio::AudioRecorder;
 use models::{ModelDownloader, ModelRecord, ModelRegistry};
 use std::sync::Arc;
 use tauri::{
@@ -10,6 +13,7 @@ use tauri::{
     Emitter, Manager, State, WindowEvent,
 };
 use tauri_plugin_sql::{Migration, MigrationKind};
+use transcription::{TranscriptionResult, WhisperTranscriber};
 
 #[cfg(target_os = "macos")]
 fn set_window_above_fullscreen(window: &tauri::WebviewWindow) {
@@ -324,6 +328,41 @@ async fn get_disk_space() -> Result<u64, String> {
     Ok(0)
 }
 
+#[tauri::command]
+async fn start_recording(duration: u64) -> Result<String, String> {
+    let temp_dir = std::env::temp_dir();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let audio_path = temp_dir.join(format!("recording_{}.wav", timestamp));
+
+    let recorder = AudioRecorder::new();
+    recorder
+        .record_to_file(audio_path.clone(), duration)
+        .map_err(|e| e.to_string())?;
+
+    Ok(audio_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Result<TranscriptionResult, String> {
+    let model = state
+        .registry
+        .get_model("whisper-small-en")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let model_path = model.path.ok_or("Model not installed")?;
+
+    let transcriber = WhisperTranscriber::new(model_path);
+    let result = transcriber
+        .transcribe(&std::path::PathBuf::from(audio_path))
+        .map_err(|e| e.to_string())?;
+
+    Ok(result)
+}
+
 fn main() {
     let migrations = vec![
         Migration {
@@ -447,7 +486,9 @@ fn main() {
             list_models,
             start_download,
             delete_model,
-            get_disk_space
+            get_disk_space,
+            start_recording,
+            transcribe_audio
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
