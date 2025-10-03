@@ -27,17 +27,21 @@ impl WhisperTranscriber {
         let mut state = self.ctx.create_state()
             .context("Failed to create Whisper state")?;
 
-        // Setup transcription parameters
+        // Setup transcription parameters - greedy decoding for speed
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
-        // Optimization: Use more threads for faster processing
-        params.set_n_threads(8); // Increased from 4 to 8 for better CPU utilization
+        // Speed optimizations
+        params.set_n_threads(8);
         params.set_translate(false);
-        params.set_language(Some("en")); // Skip language detection for speed
+        params.set_language(Some("en"));
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        params.set_token_timestamps(false);  // Disable token timestamps
+        params.set_max_len(0);               // No length limit
+        params.set_suppress_blank(true);     // Skip silent sections
+        params.set_suppress_non_speech_tokens(true);
 
         // Run transcription
         state
