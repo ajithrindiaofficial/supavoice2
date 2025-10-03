@@ -1,0 +1,316 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 0 0% 0%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 96%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 0 0% 0%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 224 71.4% 4.1%;
+    --foreground: 210 20% 98%;
+    --card: 224 71.4% 4.1%;
+    --card-foreground: 210 20% 98%;
+    --popover: 224 71.4% 4.1%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 210 20% 98%;
+    --primary-foreground: 220.9 39.3% 11%;
+    --secondary: 215 27.9% 16.9%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 215 27.9% 16.9%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+    --accent: 215 27.9% 16.9%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 215 27.9% 16.9%;
+    --input: 215 27.9% 16.9%;
+    --ring: 216 12.2% 83.9%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    cursor: default;
+  }
+  
+  /* Interactive elements should show pointer cursor */
+  button,
+  [role="button"],
+  a,
+  [role="link"],
+  select,
+  [role="combobox"],
+  [role="tab"],
+  label {
+    cursor: pointer !important;
+  }
+  
+  /* Remove hover effects from badges */
+  .badge,
+  [class*="badge"] {
+    cursor: default !important;
+  }
+  
+  /* Disable badge hover and active states */
+  .badge:hover,
+  [class*="badge"]:hover,
+  .badge:active,
+  [class*="badge"]:active {
+    background-color: initial !important;
+    transform: none !important;
+    box-shadow: initial !important;
+  }
+  
+  /* Allow selection and text cursor in inputs and text areas */
+  input,
+  textarea,
+  [contenteditable="true"],
+  [role="textbox"] {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    cursor: text !important;
+  }
+  
+  html, body {
+    overflow: hidden;
+    height: 100vh;
+  }
+  body {
+    @apply text-foreground;
+    background: transparent !important;
+  }
+  
+  #root {
+    background: transparent !important;
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+
+/* System theme detection - moved to end of file to prevent conflicts */
+  
+@media (prefers-color-scheme: light) {
+  .bg-transparent-light {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+  }
+  
+  .bg-transparent-dark {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+  }
+}
+
+/* Window inner stroke - 30% white in both light and dark modes */
+.window-with-stroke {
+  position: relative;
+}
+
+.window-with-stroke::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px; /* Match macOS window corner radius */
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* Theme-specific component styling with proper isolation */
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Light theme variables stay the same */
+  }
+  
+  /* Light theme components */
+  .bg-card {
+    background-color: rgba(255, 255, 255, 0.5) !important;
+    border: none !important;
+    backdrop-filter: blur(32px) !important;
+  }
+  .bg-muted {
+    background-color: rgba(255, 255, 255, 0.5) !important;
+  }
+  .bg-background {
+    background-color: rgba(255, 255, 255, 0.6) !important;
+  }
+  
+  /* Light theme inputs */
+  input,
+  textarea,
+  button[role="combobox"] {
+    background-color: rgba(0, 0, 0, 0.05) !important;
+    border: none !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+  }
+  
+  input:focus,
+  input:focus-visible,
+  textarea:focus,
+  textarea:focus-visible,
+  button[role="combobox"]:focus,
+  button[role="combobox"]:focus-visible {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    outline: none !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05), 0 0 0 1px hsl(var(--ring)) !important;
+  }
+  
+  /* Default button consistency */
+  button.bg-primary {
+    border: 1px solid transparent !important;
+  }
+  
+  /* Button pressed states */
+  button:active:not([class*="badge"]) {
+    box-shadow: inset 0 0 0 200px rgba(0, 0, 0, 0.05) !important;
+    transform: scale(0.995) !important;
+    transition: box-shadow 0.1s ease, transform 0.1s ease !important;
+  }
+  
+  /* Primary button pressed state */
+  button.bg-primary:active {
+    box-shadow: inset 0 0 0 200px rgba(255, 255, 255, 0.1) !important;
+  }
+  
+  /* Scroll indicators */
+  .scroll-top-shadow {
+    border-top: 1px solid rgba(0, 0, 0, 0.05) !important;
+    box-shadow: inset 0 8px 8px -8px rgba(0, 0, 0, 0.1) !important;
+  }
+  
+  .scroll-bottom-shadow {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+    box-shadow: inset 0 -8px 8px -8px rgba(0, 0, 0, 0.1) !important;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 85%;
+  }
+  
+  /* Dark theme components */
+  .bg-card {
+    background-color: rgba(0, 0, 0, 0.3) !important;
+    border: none !important;
+  }
+  .bg-muted {
+    background-color: rgba(0, 0, 0, 0.3) !important;
+  }
+  .bg-background {
+    background-color: hsl(var(--background)) !important;
+  }
+  
+  /* Active tab styling - target only tab triggers */
+  button[data-state=active] {
+    background-color: rgba(255, 255, 255, 0.6) !important;
+    color: black !important;
+  }
+  
+  /* Separator/divider styling */
+  .bg-border {
+    background-color: rgba(255, 255, 255, 0.075) !important;
+  }
+  
+  /* Button styling */
+  button.bg-background {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+  }
+  
+  button.bg-primary {
+    background-color: rgba(255, 255, 255, 0.9) !important;
+    color: black !important;
+    border: 1px solid transparent !important;
+  }
+  
+  /* Button pressed states */
+  button:active:not([class*="badge"]) {
+    box-shadow: inset 0 0 0 200px rgba(255, 255, 255, 0.1) !important;
+    transform: scale(0.995) !important;
+    transition: box-shadow 0.1s ease, transform 0.1s ease !important;
+  }
+  
+  /* Primary button pressed state */
+  button.bg-primary:active {
+    box-shadow: inset 0 0 0 200px rgba(0, 0, 0, 0.05) !important;
+  }
+  
+  /* Scroll indicators */
+  .scroll-top-shadow {
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: inset 0 8px 8px -8px rgba(255, 255, 255, 0.12) !important;
+  }
+  
+  .scroll-bottom-shadow {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: inset 0 -8px 8px -8px rgba(255, 255, 255, 0.12) !important;
+  }
+  
+  /* Dark theme inputs */
+  input,
+  textarea,
+  button[role="combobox"] {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    border: none !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.1) !important;
+  }
+  
+  input:focus,
+  input:focus-visible,
+  textarea:focus,
+  textarea:focus-visible,
+  button[role="combobox"]:focus,
+  button[role="combobox"]:focus-visible {
+    background-color: rgba(0, 0, 0, 0.3) !important;
+    outline: none !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.1), 0 0 0 1px hsl(var(--ring)) !important;
+  }
+}
