@@ -1,9 +1,13 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod models;
+
+use models::{ModelDownloader, ModelRecord, ModelRegistry};
+use std::sync::Arc;
 use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Emitter, Manager, State, WindowEvent,
 };
 use tauri_plugin_sql::{Migration, MigrationKind};
 
@@ -231,16 +235,93 @@ fn apply_window_vibrancy(window: tauri::WebviewWindow) -> Result<(), String> {
         println!("Applying native vibrancy...");
         apply_native_vibrancy(&window)
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         Err("Windows blur not implemented".to_string())
     }
-    
+
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Err("Vibrancy not supported on this platform".to_string())
     }
+}
+
+// App state for model management
+struct AppState {
+    registry: Arc<ModelRegistry>,
+    downloader: Arc<ModelDownloader>,
+}
+
+#[tauri::command]
+async fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelRecord>, String> {
+    state
+        .registry
+        .list_models()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn start_download(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    model_id: String,
+) -> Result<(), String> {
+    let downloader = state.downloader.clone();
+    let model_id_clone = model_id.clone();
+
+    // Spawn download task
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = downloader.download_model(model_id_clone.clone(), app.clone()).await {
+            eprintln!("Download failed for {}: {}", model_id_clone, e);
+            // Emit error event
+            let _ = app.emit(
+                "download_failed",
+                serde_json::json!({
+                    "model_id": model_id_clone,
+                    "error": e.to_string(),
+                }),
+            );
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_model(state: State<'_, AppState>, model_id: String) -> Result<(), String> {
+    state
+        .downloader
+        .delete_model(model_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_disk_space() -> Result<u64, String> {
+    // Get free disk space (basic implementation)
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let output = Command::new("df")
+            .arg("-k")
+            .arg("/")
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = output_str.lines().collect();
+        if lines.len() >= 2 {
+            let parts: Vec<&str> = lines[1].split_whitespace().collect();
+            if parts.len() >= 4 {
+                let free_kb: u64 = parts[3].parse().unwrap_or(0);
+                return Ok(free_kb * 1024); // Convert to bytes
+            }
+        }
+    }
+
+    Ok(0)
 }
 
 fn main() {
@@ -262,13 +343,23 @@ fn main() {
         }
     ];
 
+    // Initialize model registry and downloader
+    let registry = Arc::new(ModelRegistry::new().expect("Failed to initialize model registry"));
+    let downloader = Arc::new(ModelDownloader::new(registry.clone()));
+
+    let app_state = AppState {
+        registry,
+        downloader,
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:ajith-macos-starter.db", migrations)
+                .add_migrations("sqlite:supavoice.db", migrations)
                 .build()
         )
+        .manage(app_state)
         .setup(|app| {
             // Set activation policy to Accessory on macOS to allow overlay above fullscreen apps
             #[cfg(target_os = "macos")]
@@ -277,7 +368,7 @@ fn main() {
             // Create system tray with proper icon
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("ajith-macos-starter")
+                .tooltip("Supavoice")
                 .on_tray_icon_event(|_tray, event| {
                     match event {
                         TrayIconEvent::Click { 
@@ -350,7 +441,14 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![toggle_overlay_window, apply_window_vibrancy])
+        .invoke_handler(tauri::generate_handler![
+            toggle_overlay_window,
+            apply_window_vibrancy,
+            list_models,
+            start_download,
+            delete_model,
+            get_disk_space
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
