@@ -14,6 +14,7 @@ use tauri::{
 };
 use tauri_plugin_sql::{Migration, MigrationKind};
 use transcription::WhisperTranscriber;
+use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
 fn set_window_above_fullscreen(window: &tauri::WebviewWindow) {
@@ -255,6 +256,7 @@ fn apply_window_vibrancy(window: tauri::WebviewWindow) -> Result<(), String> {
 struct AppState {
     registry: Arc<ModelRegistry>,
     downloader: Arc<ModelDownloader>,
+    transcriber_cache: Arc<Mutex<Option<WhisperTranscriber>>>,
 }
 
 #[tauri::command]
@@ -378,12 +380,22 @@ async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Res
         .await
         .map_err(|e| e.to_string())?;
 
-    println!("Model found: id={}, status={:?}, path={:?}", model.id, model.status, model.path);
     let model_path = model.path.ok_or("Model not installed")?;
-    println!("Using model path: {:?}", model_path);
 
-    let transcriber = WhisperTranscriber::new(model_path)
-        .map_err(|e| e.to_string())?;
+    // Check if model is already cached
+    let mut cache = state.transcriber_cache.lock().unwrap();
+
+    if cache.is_none() {
+        println!("🔄 Loading model into memory (first time)...");
+        let transcriber = WhisperTranscriber::new(model_path)
+            .map_err(|e| e.to_string())?;
+        *cache = Some(transcriber);
+        println!("✅ Model loaded and cached!");
+    } else {
+        println!("⚡ Using cached model (FAST!)");
+    }
+
+    let transcriber = cache.as_ref().unwrap();
     let result = transcriber
         .transcribe(&audio_path)
         .map_err(|e| e.to_string())?;
@@ -414,9 +426,50 @@ fn main() {
     let registry = Arc::new(ModelRegistry::new().expect("Failed to initialize model registry"));
     let downloader = Arc::new(ModelDownloader::new(registry.clone()));
 
+    // Preload Whisper model on startup
+    let transcriber_cache = Arc::new(Mutex::new(None));
+    let registry_clone = registry.clone();
+    let cache_clone = transcriber_cache.clone();
+
+    std::thread::spawn(move || {
+        println!("🚀 Preloading Whisper model in background...");
+
+        // Try to find an installed model
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let model_id = runtime.block_on(async {
+            if let Ok(model) = registry_clone.get_model("whisper-small-en").await {
+                if model.path.is_some() { return Some("whisper-small-en"); }
+            }
+            if let Ok(model) = registry_clone.get_model("whisper-base-en").await {
+                if model.path.is_some() { return Some("whisper-base-en"); }
+            }
+            if let Ok(model) = registry_clone.get_model("whisper-small").await {
+                if model.path.is_some() { return Some("whisper-small"); }
+            }
+            None
+        });
+
+        if let Some(id) = model_id {
+            if let Ok(model) = runtime.block_on(registry_clone.get_model(id)) {
+                if let Some(path) = model.path {
+                    match WhisperTranscriber::new(path) {
+                        Ok(transcriber) => {
+                            *cache_clone.lock().unwrap() = Some(transcriber);
+                            println!("✅ Model preloaded successfully!");
+                        }
+                        Err(e) => println!("⚠️  Failed to preload model: {}", e),
+                    }
+                }
+            }
+        } else {
+            println!("ℹ️  No Whisper model installed yet, skipping preload");
+        }
+    });
+
     let app_state = AppState {
         registry,
         downloader,
+        transcriber_cache,
     };
 
     tauri::Builder::default()
