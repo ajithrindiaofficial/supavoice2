@@ -51,6 +51,20 @@ impl ModelRegistry {
             },
         );
 
+        models.insert(
+            "whisper-small".to_string(),
+            ModelRecord {
+                id: "whisper-small".to_string(),
+                name: "Whisper Small (Multilingual)".to_string(),
+                kind: ModelKind::Whisper,
+                size_mb: 466,
+                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin".to_string(),
+                checksum: "".to_string(),
+                status: ModelStatus::NotInstalled,
+                path: None,
+            },
+        );
+
         // LLM models
         models.insert(
             "gemma-2-2b-instruct".to_string(),
@@ -79,6 +93,15 @@ impl ModelRegistry {
                 path: None,
             },
         );
+
+        // Check for existing models on disk and update status
+        for (id, model) in models.iter_mut() {
+            let model_path = base_path.join(id);
+            if model_path.exists() {
+                model.status = ModelStatus::Installed;
+                model.path = Some(model_path.clone());
+            }
+        }
 
         Ok(Self {
             models: Arc::new(RwLock::new(models)),
