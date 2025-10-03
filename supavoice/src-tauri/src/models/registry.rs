@@ -22,15 +22,15 @@ impl ModelRegistry {
         let mut models = HashMap::new();
 
         // Initialize hardcoded model catalog
-        // Whisper models
+        // Whisper models (GGML format for whisper-rs)
         models.insert(
             "whisper-small-en".to_string(),
             ModelRecord {
                 id: "whisper-small-en".to_string(),
-                name: "Whisper Small (English) - Candle".to_string(),
+                name: "Whisper Small (English)".to_string(),
                 kind: ModelKind::Whisper,
                 size_mb: 466,
-                download_url: "https://huggingface.co/openai/whisper-small.en/resolve/main/model.safetensors".to_string(),
+                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin".to_string(),
                 checksum: "".to_string(),
                 status: ModelStatus::NotInstalled,
                 path: None,
@@ -41,10 +41,10 @@ impl ModelRegistry {
             "whisper-base-en".to_string(),
             ModelRecord {
                 id: "whisper-base-en".to_string(),
-                name: "Whisper Base (English) - Candle".to_string(),
+                name: "Whisper Base (English)".to_string(),
                 kind: ModelKind::Whisper,
                 size_mb: 142,
-                download_url: "https://huggingface.co/openai/whisper-base.en/resolve/main/model.safetensors".to_string(),
+                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin".to_string(),
                 checksum: "".to_string(),
                 status: ModelStatus::NotInstalled,
                 path: None,
@@ -55,10 +55,10 @@ impl ModelRegistry {
             "whisper-small".to_string(),
             ModelRecord {
                 id: "whisper-small".to_string(),
-                name: "Whisper Small (Multilingual) - Candle".to_string(),
+                name: "Whisper Small (Multilingual)".to_string(),
                 kind: ModelKind::Whisper,
                 size_mb: 466,
-                download_url: "https://huggingface.co/openai/whisper-small/resolve/main/model.safetensors".to_string(),
+                download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin".to_string(),
                 checksum: "".to_string(),
                 status: ModelStatus::NotInstalled,
                 path: None,
@@ -96,13 +96,7 @@ impl ModelRegistry {
 
         // Check for existing models on disk and update status
         for (id, model) in models.iter_mut() {
-            let model_path = if id.starts_with("whisper") {
-                // Whisper models are in directories with model.safetensors
-                base_path.join(id).join("model.safetensors")
-            } else {
-                // LLM models are direct files
-                base_path.join(id)
-            };
+            let model_path = base_path.join(id);
 
             if model_path.exists() {
                 model.status = ModelStatus::Installed;
@@ -150,13 +144,8 @@ impl ModelRegistry {
     }
 
     pub fn get_model_path(&self, id: &str) -> PathBuf {
-        // For Whisper models, return path to model.safetensors inside a directory
-        // For LLM models, return direct file path
-        if id.starts_with("whisper") {
-            self.base_path.join(id).join("model.safetensors")
-        } else {
-            self.base_path.join(id)
-        }
+        // All models are now direct files (GGML/GGUF format)
+        self.base_path.join(id)
     }
 
     pub fn get_base_path(&self) -> &PathBuf {

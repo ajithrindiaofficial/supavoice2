@@ -30,45 +30,15 @@ impl ModelDownloader {
 
         let model = self.registry.get_model(&model_id).await?;
         let download_url = model.download_url.clone();
-        let model_kind = model.kind.clone();
         let model_path = self.registry.get_model_path(&model_id);
 
-        // For Whisper models, create a directory structure
-        // For LLM models, just ensure parent directory exists
-        if matches!(model_kind, ModelKind::Whisper) {
-            // Create the whisper model directory
-            if let Some(parent) = model_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-        } else {
-            // For LLM, just create parent directory
-            if let Some(parent) = model_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
+        // Ensure parent directory exists
+        if let Some(parent) = model_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
         }
 
-        // Download main model file
+        // Download model file (GGML/GGUF format)
         self.download_file(&download_url, &model_path, &model_id, &app_handle).await?;
-
-        // For Whisper models, also download config.json and tokenizer.json
-        if matches!(model_kind, ModelKind::Whisper) {
-            let parent_dir = model_path.parent()
-                .ok_or_else(|| anyhow::anyhow!("Invalid model path"))?;
-
-            // Download config.json
-            let config_url = download_url.replace("/model.safetensors", "/config.json");
-            let config_path = parent_dir.join("config.json");
-            let config_response = self.client.get(&config_url).send().await?;
-            let config_bytes = config_response.bytes().await?;
-            tokio::fs::write(&config_path, config_bytes).await?;
-
-            // Download tokenizer.json
-            let tokenizer_url = download_url.replace("/model.safetensors", "/tokenizer.json");
-            let tokenizer_path = parent_dir.join("tokenizer.json");
-            let tokenizer_response = self.client.get(&tokenizer_url).send().await?;
-            let tokenizer_bytes = tokenizer_response.bytes().await?;
-            tokio::fs::write(&tokenizer_path, tokenizer_bytes).await?;
-        }
 
         // Update registry
         self.registry

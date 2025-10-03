@@ -56,11 +56,11 @@ function App() {
       setIsTranscribing(true);
 
       // Transcribe the audio
-      const result = await invoke<TranscriptionResult>("transcribe_audio", {
+      const result = await invoke<string>("transcribe_audio", {
         audioPath,
       });
 
-      setTranscript(result.text);
+      setTranscript(result);
       setIsTranscribing(false);
     } catch (error) {
       console.error("Recording/transcription failed:", error);

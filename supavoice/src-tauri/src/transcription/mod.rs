@@ -1,3 +1,3 @@
 pub mod whisper;
 
-pub use whisper::{TranscriptionResult, TranscriptionSegment, WhisperTranscriber};
+pub use whisper::WhisperTranscriber;

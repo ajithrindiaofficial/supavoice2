@@ -13,7 +13,7 @@ use tauri::{
     Emitter, Manager, State, WindowEvent,
 };
 use tauri_plugin_sql::{Migration, MigrationKind};
-use transcription::{TranscriptionResult, WhisperTranscriber};
+use transcription::WhisperTranscriber;
 
 #[cfg(target_os = "macos")]
 fn set_window_above_fullscreen(window: &tauri::WebviewWindow) {
@@ -354,12 +354,22 @@ async fn start_recording(duration: u64) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Result<TranscriptionResult, String> {
-    // Try to use whisper-small (multilingual) first, fallback to whisper-small-en
-    let model_id = if state.registry.get_model("whisper-small").await.is_ok() {
-        "whisper-small"
+async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Result<String, String> {
+    // Try models in order: whisper-small-en, whisper-small, whisper-base-en
+    let model_id = if let Ok(model) = state.registry.get_model("whisper-small-en").await {
+        if model.path.is_some() {
+            "whisper-small-en"
+        } else if let Ok(model) = state.registry.get_model("whisper-small").await {
+            if model.path.is_some() {
+                "whisper-small"
+            } else {
+                "whisper-base-en"
+            }
+        } else {
+            "whisper-base-en"
+        }
     } else {
-        "whisper-small-en"
+        "whisper-base-en"
     };
 
     let model = state
@@ -368,11 +378,14 @@ async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Res
         .await
         .map_err(|e| e.to_string())?;
 
+    println!("Model found: id={}, status={:?}, path={:?}", model.id, model.status, model.path);
     let model_path = model.path.ok_or("Model not installed")?;
+    println!("Using model path: {:?}", model_path);
 
-    let transcriber = WhisperTranscriber::new(model_path);
+    let transcriber = WhisperTranscriber::new(model_path)
+        .map_err(|e| e.to_string())?;
     let result = transcriber
-        .transcribe(&std::path::PathBuf::from(audio_path))
+        .transcribe(&audio_path)
         .map_err(|e| e.to_string())?;
 
     Ok(result)
