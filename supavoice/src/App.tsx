@@ -4,7 +4,7 @@ import { Titlebar } from "@/components/Titlebar";
 import { Layout } from "@/components/Layout";
 import Settings from "@/pages/Settings";
 import { configureOverlayWindow } from "@/lib/window";
-import { Mic, Settings as SettingsIcon } from "lucide-react";
+import { Mic, Settings as SettingsIcon, Copy, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface TranscriptionResult {
@@ -21,16 +21,33 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcript, setTranscript] = useState<string>("");
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Configure window for overlay behavior when app starts
     configureOverlayWindow();
   }, []);
 
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (isRecording) {
+      setRecordingTime(0);
+      interval = setInterval(() => {
+        setRecordingTime((t) => t + 1);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isRecording]);
+
   const handleRecord = async () => {
     try {
       setIsRecording(true);
       setTranscript("");
+      setError(null);
 
       // Record for 10 seconds
       const audioPath = await invoke<string>("start_recording", { duration: 10 });
@@ -49,7 +66,15 @@ function App() {
       console.error("Recording/transcription failed:", error);
       setIsRecording(false);
       setIsTranscribing(false);
-      alert(`Error: ${error}`);
+      setError(error as string);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (transcript) {
+      await navigator.clipboard.writeText(transcript);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -81,25 +106,75 @@ function App() {
                       ? "bg-red-500 animate-pulse"
                       : isTranscribing
                       ? "bg-blue-500"
-                      : "bg-primary hover:bg-primary/90"
+                      : "bg-primary hover:bg-primary/90 disabled:opacity-50"
                   }`}
                 >
-                  <Mic className="h-10 w-10 text-white" />
+                  {isTranscribing ? (
+                    <Loader2 className="h-10 w-10 text-white animate-spin" />
+                  ) : (
+                    <Mic className="h-10 w-10 text-white" />
+                  )}
                 </button>
 
                 <p className="mt-4 text-sm text-muted-foreground">
                   {isRecording
-                    ? "Recording... (10s)"
+                    ? `Recording... ${recordingTime}s / 10s`
                     : isTranscribing
-                    ? "Transcribing..."
-                    : "Click to record"}
+                    ? "Transcribing with Candle-Whisper..."
+                    : "Click to record (10 seconds)"}
                 </p>
+
+                {error && (
+                  <div className="mt-4 w-full max-w-md p-3 bg-red-100 border border-red-300 rounded-lg">
+                    <p className="text-sm text-red-800">{error}</p>
+                  </div>
+                )}
 
                 {transcript && (
                   <div className="mt-8 w-full max-w-md">
-                    <h3 className="text-sm font-semibold mb-2">Transcript:</h3>
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="text-sm font-semibold">Transcript:</h3>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCopy}
+                        className="gap-2"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="h-3 w-3" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3 w-3" />
+                            Copy
+                          </>
+                        )}
+                      </Button>
+                    </div>
                     <div className="p-4 bg-muted rounded-lg">
-                      <p className="text-sm">{transcript}</p>
+                      <p className="text-sm whitespace-pre-wrap">{transcript}</p>
+                    </div>
+
+                    {/* Placeholder for future formatting feature */}
+                    <div className="mt-4 flex gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled
+                        className="flex-1"
+                      >
+                        Format as Email (Coming Soon)
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled
+                        className="flex-1"
+                      >
+                        Format as Notes (Coming Soon)
+                      </Button>
                     </div>
                   </div>
                 )}

@@ -26,8 +26,11 @@ impl ModelDownloader {
         model_id: String,
         app_handle: tauri::AppHandle,
     ) -> Result<()> {
+        use super::types::ModelKind;
+
         let model = self.registry.get_model(&model_id).await?;
         let download_url = model.download_url.clone();
+        let model_kind = model.kind.clone();
         let model_path = self.registry.get_model_path(&model_id);
 
         // Create directory if it doesn't exist
@@ -35,11 +38,58 @@ impl ModelDownloader {
             tokio::fs::create_dir_all(parent).await?;
         }
 
+        // Download main model file
+        self.download_file(&download_url, &model_path, &model_id, &app_handle).await?;
+
+        // For Whisper models, also download config.json and tokenizer.json
+        if matches!(model_kind, ModelKind::Whisper) {
+            let parent_dir = model_path.parent()
+                .ok_or_else(|| anyhow::anyhow!("Invalid model path"))?;
+
+            // Download config.json
+            let config_url = download_url.replace("/model.safetensors", "/config.json");
+            let config_path = parent_dir.join("config.json");
+            let config_response = self.client.get(&config_url).send().await?;
+            let config_bytes = config_response.bytes().await?;
+            tokio::fs::write(&config_path, config_bytes).await?;
+
+            // Download tokenizer.json
+            let tokenizer_url = download_url.replace("/model.safetensors", "/tokenizer.json");
+            let tokenizer_path = parent_dir.join("tokenizer.json");
+            let tokenizer_response = self.client.get(&tokenizer_url).send().await?;
+            let tokenizer_bytes = tokenizer_response.bytes().await?;
+            tokio::fs::write(&tokenizer_path, tokenizer_bytes).await?;
+        }
+
+        // Update registry
+        self.registry
+            .update_model_status(&model_id, ModelStatus::Installed)
+            .await?;
+        self.registry.update_model_path(&model_id, model_path).await?;
+
+        // Emit completion event
+        app_handle.emit(
+            "download_complete",
+            serde_json::json!({
+                "model_id": model_id,
+            }),
+        )?;
+
+        Ok(())
+    }
+
+    async fn download_file(
+        &self,
+        url: &str,
+        file_path: &PathBuf,
+        model_id: &str,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<()> {
         // Download to .part file first
-        let part_path = model_path.with_extension("part");
+        let part_path = file_path.with_extension("part");
 
         // Start download
-        let response = self.client.get(&download_url).send().await?;
+        let response = self.client.get(url).send().await?;
         let total_size = response.content_length().unwrap_or(0);
 
         let mut file = File::create(&part_path).await?;
@@ -62,7 +112,7 @@ impl ModelDownloader {
             // Update status in registry
             self.registry
                 .update_model_status(
-                    &model_id,
+                    model_id,
                     ModelStatus::Downloading {
                         progress,
                         bytes: downloaded,
@@ -90,21 +140,7 @@ impl ModelDownloader {
         // TODO: Implement checksum verification
 
         // Rename .part to final file
-        tokio::fs::rename(&part_path, &model_path).await?;
-
-        // Update registry
-        self.registry
-            .update_model_status(&model_id, ModelStatus::Installed)
-            .await?;
-        self.registry.update_model_path(&model_id, model_path).await?;
-
-        // Emit completion event
-        app_handle.emit(
-            "download_complete",
-            serde_json::json!({
-                "model_id": model_id,
-            }),
-        )?;
+        tokio::fs::rename(&part_path, file_path).await?;
 
         Ok(())
     }
