@@ -155,32 +155,52 @@ hound = "3.5" # WAV file encoding
 - Output PCM16 format @ 16kHz sample rate (Whisper requirement)
 - Push-to-talk or auto-stop with VAD (optional for v1)
 
-#### 3.2 Whisper Integration
-Add dependency (with Metal support on macOS):
+#### 3.2 Whisper Integration (Using Candle)
+Add dependencies:
 ```toml
-# For non-macOS platforms
-whisper-rs = { git = "https://github.com/tazz4843/whisper-rs" }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-whisper-rs = { git = "https://github.com/tazz4843/whisper-rs", features = ["metal"] }
+candle-core = "0.8"
+candle-nn = "0.8"
+candle-transformers = "0.8"
 ```
 
-**Why whisper.cpp (via whisper-rs)?**
-- Native Metal GPU acceleration on macOS (2-3x faster than CPU)
-- Mature Rust bindings, easier cross-platform packaging
-- Good enough performance for MVP (30-sec audio → ~8-10 sec on M1 with Metal)
-- Can add Faster-Whisper backend later for CPU-optimized workloads
+**Why Candle instead of whisper-rs/whisper.cpp?**
+- **Pure Rust implementation** - No C/C++ dependencies or compilation issues
+- **Metal/CUDA support** - GPU acceleration on macOS (Metal) and NVIDIA GPUs
+- **Hugging Face integration** - Direct .safetensors model loading
+- **Active development** - Maintained by Hugging Face team
+- **Simpler packaging** - No external binaries needed
+- **Good performance** - Competitive with whisper.cpp for most use cases
+
+**Trade-offs:**
+- Slightly slower than highly optimized whisper.cpp on CPU-only workloads
+- Less mature than whisper.cpp (fewer production deployments)
+- Fewer optimization options compared to CTranslate2/Faster-Whisper
 
 **File: `transcription/whisper.rs`**
 ```rust
-#[tauri::command]
-async fn transcribe_audio(
-    state: State<'_, AppState>,
-    audio_path: String,
-) -> Result<TranscriptionResult, String> {
-    // Load model from AppData/models/whisper/small.en/
-    // Process audio with whisper-rs
-    // Return segments with timestamps
+use candle_core::{Device, Tensor};
+use candle_transformers::models::whisper::{self as m, audio, Config};
+
+pub struct WhisperTranscriber {
+    model: m::model::Whisper,
+    config: Config,
+    device: Device,
+}
+
+impl WhisperTranscriber {
+    pub fn new(model_path: PathBuf) -> Result<Self> {
+        // Load .safetensors model from disk
+        // Initialize Candle device (Metal on macOS, CUDA on NVIDIA, CPU fallback)
+        // Create Whisper model instance
+    }
+
+    pub fn transcribe(&self, audio_path: &PathBuf) -> Result<TranscriptionResult> {
+        // Load audio as f32 samples @ 16kHz
+        // Convert to Candle tensor
+        // Run through Whisper model
+        // Decode tokens to text with timestamps
+        // Return TranscriptionResult
+    }
 }
 ```
 
@@ -205,11 +225,26 @@ Update `src/App.tsx` (main overlay window):
 
 ### **Phase 4: Offline Formatting (LLM)** (Week 4-5)
 
-#### 4.1 llama.cpp Integration (Gemma-2-2B)
-Add dependency:
+#### 4.1 LLM Integration Options
+
+**Option A: llama.cpp (via llama-cpp-rs) - RECOMMENDED for MVP**
 ```toml
 llama-cpp-rs = { git = "https://github.com/rustformers/llama-cpp-rs" }
 ```
+- ✅ Uses GGUF quantized models (smaller, faster)
+- ✅ Best performance for LLMs (highly optimized C++)
+- ✅ JSON-schema constrained decoding support
+- ✅ Metal/CUDA acceleration
+- ⚠️ C++ dependency (requires compilation)
+
+**Option B: Candle (pure Rust, experimental for LLMs)**
+- ✅ Pure Rust, consistent with Whisper implementation
+- ✅ Can load .safetensors models directly
+- ⚠️ LLM support less mature than whisper
+- ⚠️ No grammar/JSON-schema constraints yet
+- ⚠️ Slower inference than llama.cpp
+
+**Decision: Use llama.cpp for Phase 4** - Better performance and proven stability for LLM inference.
 
 **File: `formatting/llm.rs`**
 ```rust
@@ -219,7 +254,7 @@ async fn format_transcript(
     transcript: String,
     template: String, // "email", "linkedin", "notes"
 ) -> Result<FormattedOutput, String> {
-    // Load Gemma-2-2B-Instruct GGUF model
+    // Load Gemma-2-2B-Instruct GGUF model via llama.cpp
     // Use JSON-schema constrained decoding
     // Return structured output
 }
@@ -279,7 +314,7 @@ trait FormattingProvider {
 
 **Implementations:**
 - `providers/openai.rs` - Whisper API + GPT-4
-- `providers/local.rs` - whisper-rs + Gemma-2-2B via llama.cpp
+- `providers/local.rs` - Candle Whisper + Gemma-2-2B via llama.cpp
 
 #### 5.2 Mode Switching
 ```rust
@@ -297,12 +332,11 @@ Frontend logic:
 ### **Phase 6: Polish & Optimization** (Week 6-7)
 
 #### 6.1 Performance Optimizations
-- **Metal/GPU Support**: Already enabled in Phase 3 for macOS
-- **Model Quantization**: Already using Q4_K_M variants for optimal size/quality
-- **Streaming**: Process audio chunks in real-time (advanced)
-- **Optional**: Add Faster-Whisper backend for CPU-optimized transcription on Windows/Linux
-  - Uses CTranslate2 with int8 quantization (2-4x faster CPU, ~40% less memory)
-  - Trade-off: More complex packaging, less mature Rust bindings
+- **Metal/GPU Support**: Candle automatically detects and uses Metal on macOS
+- **Model Quantization**: Using Q4_K_M GGUF variants for LLM (optimal size/quality)
+- **Streaming**: Process audio chunks in real-time (advanced - requires streaming decoder)
+- **Batch Processing**: Consider batching multiple audio segments for efficiency
+- **Model Caching**: Keep models loaded in memory between requests (avoid reload overhead)
 
 #### 6.2 UX Improvements
 - First-run onboarding flow
@@ -372,12 +406,13 @@ src/
 | Decision | Rationale |
 |----------|-----------|
 | **Offline-first** | Privacy, speed, works without internet |
-| **whisper.cpp (via whisper-rs)** | Metal GPU support on macOS, simpler packaging, mature Rust bindings |
+| **Candle for Whisper** | Pure Rust, Metal/CUDA support, HuggingFace integration, simpler packaging |
+| **llama.cpp for LLM** | Best LLM performance, JSON-schema constraints, proven stability |
 | **Gemma-2-2B-Instruct** | Optimal size/quality for formatting (1.71 GB), fast inference, strong instruction following |
-| **llama.cpp** | Best Rust bindings, JSON-schema constrained decoding support |
 | **JSON-schema** | Guaranteed parseable output, no regex hacks |
 | **Tauri events** | Real-time progress updates to UI |
-| **Defer Faster-Whisper** | Keep MVP simple; add as optional backend later for CPU optimization |
+| **.safetensors for Whisper** | Native Candle format, direct HuggingFace download |
+| **GGUF for LLM** | Quantized format optimized for llama.cpp |
 
 ---
 
@@ -413,20 +448,20 @@ src/
 - **Qwen2-1.5B-Instruct** (GGUF Q4_K_M): ~986 MB - Lightweight alternative for lower-end hardware
 
 ### Technical Notes
-- **GGUF**: Model file format used by llama.cpp
+- **Candle**: Pure Rust ML framework by HuggingFace with Metal/CUDA support
+- **.safetensors**: Safe tensor storage format, native to HuggingFace/Candle
+- **GGUF**: Quantized model format used by llama.cpp for efficient LLM inference
 - **Quantization (Q4/Q5)**: Compresses model weights to fewer bits (4-5 bits) to shrink size with minimal quality loss
-- **whisper.cpp**: Fast C/C++ port of Whisper (runs on CPU/GPU locally)
-- **Metal**: Apple's GPU framework - enables hardware acceleration on macOS
-- **Faster-Whisper**: Optimized Whisper using CTranslate2 (int8 quantization, 2-4x CPU speedup)
-- **Grammar/JSON-schema**: Constrain LLM outputs to valid structures (e.g., JSON)
+- **Metal**: Apple's GPU framework - enables hardware acceleration on macOS (via Candle)
+- **Grammar/JSON-schema**: Constrain LLM outputs to valid structures (via llama.cpp)
 - **VAD**: Voice Activity Detection - detects where speech starts/ends
 - **ASR**: Automatic Speech Recognition
 
 ### Performance Estimates (30-second audio transcription)
 | Setup | Processing Time | Memory Usage |
 |-------|----------------|--------------|
-| whisper.cpp CPU-only | ~25-30 sec | 1.2 GB |
-| whisper.cpp Metal (M1 Mac) | ~8-10 sec | 900 MB |
-| Faster-Whisper int8 CPU | ~12-15 sec | 700 MB |
+| Candle Whisper CPU-only | ~30-35 sec | 1.1 GB |
+| Candle Whisper Metal (M1 Mac) | ~10-15 sec | 950 MB |
+| Candle Whisper CUDA (NVIDIA) | ~8-12 sec | 900 MB |
 
-**Recommendation:** Use whisper.cpp with Metal for MVP. Consider adding Faster-Whisper in v1.1 for users on Windows/Linux who need better CPU performance.
+**Note:** Candle performance is competitive with whisper.cpp for GPU workloads. Pure Rust benefits (easier packaging, no C++ toolchain) outweigh slight CPU performance difference for our desktop use case.
