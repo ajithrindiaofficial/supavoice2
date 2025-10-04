@@ -8,20 +8,36 @@ pub struct LlmFormatter {
 
 impl LlmFormatter {
     pub fn new() -> Result<Self> {
-        // Get the path to llama-cli binary in resources
-        let resources_dir = std::env::current_exe()?
+        // Try multiple locations for llama-cli binary
+        let exe_dir = std::env::current_exe()?
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Failed to get parent directory"))?
-            .join("../Resources");
+            .to_path_buf();
 
-        let llama_binary_path = resources_dir.join("llama-cli");
+        // Possible locations (dev vs production)
+        let possible_paths = vec![
+            // Production: macOS app bundle
+            exe_dir.join("../Resources/llama-cli"),
+            // Dev: src-tauri/resources
+            exe_dir.join("../../resources/llama-cli"),
+            // Dev: alternative
+            exe_dir.join("../../../src-tauri/resources/llama-cli"),
+        ];
 
-        if !llama_binary_path.exists() {
-            return Err(anyhow::anyhow!(
-                "llama-cli binary not found at {:?}",
-                llama_binary_path
-            ));
-        }
+        let llama_binary_path = possible_paths
+            .iter()
+            .find(|path| path.exists())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "llama-cli binary not found. Tried:\n{}",
+                    possible_paths
+                        .iter()
+                        .map(|p| format!("  - {:?}", p))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })?
+            .clone();
 
         println!("✅ Found llama-cli at: {:?}", llama_binary_path);
 

@@ -24,6 +24,8 @@ function App() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFormatting, setIsFormatting] = useState(false);
+  const [formattedText, setFormattedText] = useState<string>("");
 
   useEffect(() => {
     // Configure window for overlay behavior when app starts
@@ -74,10 +76,30 @@ function App() {
   };
 
   const handleCopy = async () => {
-    if (transcript) {
-      await navigator.clipboard.writeText(transcript);
+    const textToCopy = formattedText || transcript;
+    if (textToCopy) {
+      await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleFormat = async (formatType: 'email' | 'notes') => {
+    if (!transcript) return;
+
+    try {
+      setIsFormatting(true);
+      setError(null);
+      const result = await invoke<string>("format_transcript", {
+        transcript,
+        formatType,
+      });
+      setFormattedText(result);
+    } catch (error) {
+      console.error("Formatting failed:", error);
+      setError(error as string);
+    } finally {
+      setIsFormatting(false);
     }
   };
 
@@ -136,7 +158,9 @@ function App() {
                 {transcript && (
                   <div className="mt-8 w-full max-w-md">
                     <div className="flex justify-between items-center mb-2">
-                      <h3 className="text-sm font-semibold">Transcript:</h3>
+                      <h3 className="text-sm font-semibold">
+                        {formattedText ? "Formatted:" : "Transcript:"}
+                      </h3>
                       <Button
                         variant="outline"
                         size="sm"
@@ -157,26 +181,57 @@ function App() {
                       </Button>
                     </div>
                     <div className="p-4 bg-muted rounded-lg">
-                      <p className="text-sm whitespace-pre-wrap">{transcript}</p>
+                      <p className="text-sm whitespace-pre-wrap">
+                        {formattedText || transcript}
+                      </p>
                     </div>
 
-                    {/* Placeholder for future formatting feature */}
+                    {formattedText && (
+                      <div className="mt-2 text-xs text-muted-foreground flex justify-between items-center">
+                        <span>Original transcript preserved</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setFormattedText("")}
+                          className="text-xs h-6"
+                        >
+                          Show Original
+                        </Button>
+                      </div>
+                    )}
+
                     <div className="mt-4 flex gap-2">
                       <Button
                         variant="secondary"
                         size="sm"
-                        disabled
+                        onClick={() => handleFormat('email')}
+                        disabled={isFormatting}
                         className="flex-1"
                       >
-                        Format as Email (Coming Soon)
+                        {isFormatting ? (
+                          <>
+                            <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                            Formatting...
+                          </>
+                        ) : (
+                          "Format as Email"
+                        )}
                       </Button>
                       <Button
                         variant="secondary"
                         size="sm"
-                        disabled
+                        onClick={() => handleFormat('notes')}
+                        disabled={isFormatting}
                         className="flex-1"
                       >
-                        Format as Notes (Coming Soon)
+                        {isFormatting ? (
+                          <>
+                            <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                            Formatting...
+                          </>
+                        ) : (
+                          "Format as Notes"
+                        )}
                       </Button>
                     </div>
                   </div>
