@@ -599,11 +599,55 @@ fn main() {
         }
     });
 
+    // Preload LLM formatter and start server on startup
+    let formatter_cache = Arc::new(Mutex::new(None));
+    let registry_clone2 = registry.clone();
+    let formatter_cache_clone = formatter_cache.clone();
+
+    std::thread::spawn(move || {
+        println!("🚀 Preloading LLM formatter in background...");
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        // Find available LLM model (gemma or qwen)
+        let llm_model = runtime.block_on(async {
+            // Priority order: gemma-2-2b-instruct > qwen2-1.5b-instruct
+            if let Ok(model) = registry_clone2.get_model("gemma-2-2b-instruct").await {
+                if model.path.is_some() { return Some(model); }
+            }
+            if let Ok(model) = registry_clone2.get_model("qwen2-1.5b-instruct").await {
+                if model.path.is_some() { return Some(model); }
+            }
+            None
+        });
+
+        if let Some(model) = llm_model {
+            if let Some(model_path) = model.path {
+                println!("📦 Starting LLM server with model: {}", model.id);
+
+                match LlmFormatter::new() {
+                    Ok(formatter) => {
+                        // Start the server in background
+                        if let Err(e) = formatter.start_server_if_needed(&model_path) {
+                            println!("⚠️  Failed to start LLM server: {}", e);
+                        } else {
+                            *formatter_cache_clone.lock().unwrap() = Some(Arc::new(formatter));
+                            println!("✅ LLM server preloaded and ready!");
+                        }
+                    }
+                    Err(e) => println!("⚠️  Failed to initialize LLM formatter: {}", e),
+                }
+            }
+        } else {
+            println!("ℹ️  No LLM model installed yet, skipping preload");
+        }
+    });
+
     let app_state = AppState {
         registry,
         downloader,
         transcriber_cache,
-        formatter_cache: Arc::new(Mutex::new(None)),
+        formatter_cache,
         recording: Arc::new(Mutex::new(None)),
     };
 

@@ -51,7 +51,7 @@ impl LlmFormatter {
         })
     }
 
-    fn start_server_if_needed(&self, model_path: &PathBuf) -> Result<()> {
+    pub fn start_server_if_needed(&self, model_path: &PathBuf) -> Result<()> {
         let mut process_guard = self.server_process.lock().unwrap();
 
         // Check if server is already running
