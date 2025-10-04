@@ -268,7 +268,7 @@ struct AppState {
     registry: Arc<ModelRegistry>,
     downloader: Arc<ModelDownloader>,
     transcriber_cache: Arc<Mutex<Option<WhisperTranscriber>>>,
-    formatter_cache: Arc<Mutex<Option<LlmFormatter>>>,
+    formatter_cache: Arc<Mutex<Option<Arc<LlmFormatter>>>>,
     recording: Arc<Mutex<Option<RecordingState>>>,
 }
 
@@ -509,21 +509,24 @@ async fn format_transcript(
     let model_path = model.path.ok_or("Model not installed")?;
 
     // Check if formatter is already cached (just holds binary path, lightweight)
-    let mut cache = state.formatter_cache.lock().unwrap();
+    // Clone the Arc to avoid holding the lock across await
+    let formatter = {
+        let mut cache = state.formatter_cache.lock().unwrap();
 
-    if cache.is_none() {
-        println!("🔄 Initializing LLM formatter (locating llama-cli binary)...");
-        let formatter = LlmFormatter::new()
-            .map_err(|e| e.to_string())?;
-        *cache = Some(formatter);
-        println!("✅ LLM formatter initialized!");
-    }
+        if cache.is_none() {
+            println!("🔄 Initializing LLM formatter (locating llama-cli binary)...");
+            let formatter = LlmFormatter::new()
+                .map_err(|e| e.to_string())?;
+            *cache = Some(Arc::new(formatter));
+            println!("✅ LLM formatter initialized!");
+        }
 
-    let formatter = cache.as_ref().unwrap();
+        cache.as_ref().unwrap().clone()
+    }; // Lock is dropped here
 
     let result = match format_type.as_str() {
-        "email" => formatter.format_as_email(&model_path, &transcript),
-        "notes" => formatter.format_as_notes(&model_path, &transcript),
+        "email" => formatter.format_as_email(&model_path, &transcript).await,
+        "notes" => formatter.format_as_notes(&model_path, &transcript).await,
         _ => Err(anyhow::anyhow!("Unknown format type: {}", format_type)),
     }
     .map_err(|e| e.to_string())?;

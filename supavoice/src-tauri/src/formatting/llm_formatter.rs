@@ -1,14 +1,17 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 pub struct LlmFormatter {
-    llama_binary_path: PathBuf,
+    llama_server_path: PathBuf,
+    server_process: Arc<Mutex<Option<Child>>>,
+    server_port: u16,
 }
 
 impl LlmFormatter {
     pub fn new() -> Result<Self> {
-        // Try multiple locations for llama-cli binary
+        // Try multiple locations for llama-server binary
         let exe_dir = std::env::current_exe()?
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Failed to get parent directory"))?
@@ -17,19 +20,19 @@ impl LlmFormatter {
         // Possible locations (dev vs production)
         let possible_paths = vec![
             // Production: macOS app bundle
-            exe_dir.join("../Resources/llama-cli"),
+            exe_dir.join("../Resources/llama-server"),
             // Dev: src-tauri/resources
-            exe_dir.join("../../resources/llama-cli"),
+            exe_dir.join("../../resources/llama-server"),
             // Dev: alternative
-            exe_dir.join("../../../src-tauri/resources/llama-cli"),
+            exe_dir.join("../../../src-tauri/resources/llama-server"),
         ];
 
-        let llama_binary_path = possible_paths
+        let llama_server_path = possible_paths
             .iter()
             .find(|path| path.exists())
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "llama-cli binary not found. Tried:\n{}",
+                    "llama-server binary not found. Tried:\n{}",
                     possible_paths
                         .iter()
                         .map(|p| format!("  - {:?}", p))
@@ -39,12 +42,54 @@ impl LlmFormatter {
             })?
             .clone();
 
-        println!("✅ Found llama-cli at: {:?}", llama_binary_path);
+        println!("✅ Found llama-server at: {:?}", llama_server_path);
 
-        Ok(Self { llama_binary_path })
+        Ok(Self {
+            llama_server_path,
+            server_process: Arc::new(Mutex::new(None)),
+            server_port: 8765, // Use a fixed port for local server
+        })
     }
 
-    pub fn format_as_email(&self, model_path: &PathBuf, transcript: &str) -> Result<String> {
+    fn start_server_if_needed(&self, model_path: &PathBuf) -> Result<()> {
+        let mut process_guard = self.server_process.lock().unwrap();
+
+        // Check if server is already running
+        if process_guard.is_some() {
+            println!("⚡ Server already running");
+            return Ok(());
+        }
+
+        println!("🚀 Starting llama-server with model: {:?}", model_path);
+
+        // Start llama-server with the model loaded
+        let child = Command::new(&self.llama_server_path)
+            .arg("-m")
+            .arg(model_path)
+            .arg("--port")
+            .arg(self.server_port.to_string())
+            .arg("-ngl")
+            .arg("99") // GPU layers
+            .arg("-c")
+            .arg("2048") // context size
+            .arg("--log-disable") // Disable logging for cleaner output
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("Failed to start llama-server")?;
+
+        *process_guard = Some(child);
+
+        // Give server time to start
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        println!("✅ Server started on port {}", self.server_port);
+
+        Ok(())
+    }
+
+    pub async fn format_as_email(&self, model_path: &PathBuf, transcript: &str) -> Result<String> {
         let prompt = format!(
             "<|im_start|>system\nYou are a helpful assistant that rewrites voice transcripts as professional emails.<|im_end|>\n\
             <|im_start|>user\nRewrite the following voice transcript as a professional email. \
@@ -54,10 +99,10 @@ impl LlmFormatter {
             transcript
         );
 
-        self.generate(model_path, &prompt)
+        self.generate(model_path, &prompt).await
     }
 
-    pub fn format_as_notes(&self, model_path: &PathBuf, transcript: &str) -> Result<String> {
+    pub async fn format_as_notes(&self, model_path: &PathBuf, transcript: &str) -> Result<String> {
         let prompt = format!(
             "<|im_start|>system\nYou are a helpful assistant that converts voice transcripts into organized notes.<|im_end|>\n\
             <|im_start|>user\nConvert the following voice transcript into clear, organized notes. \
@@ -67,50 +112,45 @@ impl LlmFormatter {
             transcript
         );
 
-        self.generate(model_path, &prompt)
+        self.generate(model_path, &prompt).await
     }
 
-    fn generate(&self, model_path: &PathBuf, prompt: &str) -> Result<String> {
-        println!("🔄 Running llama.cpp with model: {:?}", model_path);
+    async fn generate(&self, model_path: &PathBuf, prompt: &str) -> Result<String> {
+        // Start server if not running (only happens once)
+        self.start_server_if_needed(model_path)?;
 
-        // Run llama-cli as subprocess
-        let output = Command::new(&self.llama_binary_path)
-            .arg("-m")
-            .arg(model_path)
-            .arg("-p")
-            .arg(prompt)
-            .arg("-n")
-            .arg("512") // max tokens to generate
-            .arg("--temp")
-            .arg("0.7")
-            .arg("-ngl")
-            .arg("99") // GPU layers (use all for Metal)
-            .arg("--no-display-prompt") // Don't echo the prompt
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .context("Failed to execute llama-cli")?;
+        println!("🔄 Sending completion request to llama-server...");
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("llama-cli failed: {}", stderr));
+        // Make HTTP request to llama-server (async)
+        let client = reqwest::Client::new();
+        let response = client
+            .post(format!("http://localhost:{}/completion", self.server_port))
+            .json(&serde_json::json!({
+                "prompt": prompt,
+                "n_predict": 512,
+                "temperature": 0.7,
+                "stop": ["<|im_end|>", "</s>"],
+                "cache_prompt": true, // Cache the prompt for faster subsequent requests
+            }))
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .context("Failed to send request to llama-server")?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Server returned error: {}",
+                response.status()
+            ));
         }
 
-        let result = String::from_utf8_lossy(&output.stdout);
+        let json: serde_json::Value = response.json().await?;
+        let content = json["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No content in response"))?;
 
-        // Clean up the output - remove any system messages and extra whitespace
-        let cleaned = result
-            .trim()
-            .lines()
-            .filter(|line| !line.starts_with("llama") && !line.starts_with("ggml")) // Filter out llama.cpp debug messages
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
+        println!("✅ Generated {} characters", content.len());
 
-        println!("✅ Generated {} characters", cleaned.len());
-
-        Ok(cleaned)
+        Ok(content.trim().to_string())
     }
 }
