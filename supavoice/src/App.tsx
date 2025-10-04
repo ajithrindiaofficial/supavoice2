@@ -121,7 +121,7 @@ function App() {
               </div>
 
               <div className="flex-1 flex flex-col items-center justify-center">
-                <h1 className="text-2xl font-bold mb-6">Supavoice</h1>
+                {/* <h1 className="text-2xl font-bold mb-6">Supavoice</h1> */}
 
                 <button
                   onClick={handleRecord}

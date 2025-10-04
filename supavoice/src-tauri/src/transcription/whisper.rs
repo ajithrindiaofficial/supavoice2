@@ -21,6 +21,10 @@ impl WhisperTranscriber {
     }
 
     pub fn transcribe(&self, audio_path: &str) -> Result<String> {
+        self.transcribe_with_prompt(audio_path, None)
+    }
+
+    pub fn transcribe_with_prompt(&self, audio_path: &str, prompt: Option<&str>) -> Result<String> {
         // Load and convert audio
         let audio_data = self.load_audio(audio_path)?;
 
@@ -29,19 +33,19 @@ impl WhisperTranscriber {
         let duration_secs = audio_data.len() as f32 / sample_rate as f32;
 
         if duration_secs < 30.0 {
-            return self.transcribe_single(&audio_data);
+            return self.transcribe_single(&audio_data, prompt);
         }
 
         // For long audio, split into chunks and process in parallel
-        self.transcribe_chunked(&audio_data)
+        self.transcribe_chunked(&audio_data, prompt)
     }
 
-    fn transcribe_single(&self, audio_data: &[f32]) -> Result<String> {
+    fn transcribe_single(&self, audio_data: &[f32], prompt: Option<&str>) -> Result<String> {
         // Create transcription state
         let mut state = self.ctx.create_state()
             .context("Failed to create Whisper state")?;
 
-        let params = self.create_params();
+        let params = self.create_params(prompt);
 
         // Run transcription
         state
@@ -65,7 +69,7 @@ impl WhisperTranscriber {
         Ok(full_text.trim().to_string())
     }
 
-    fn transcribe_chunked(&self, audio_data: &[f32]) -> Result<String> {
+    fn transcribe_chunked(&self, audio_data: &[f32], prompt: Option<&str>) -> Result<String> {
         // Split audio into 30-second chunks with 1s overlap for context
         let sample_rate = 16000;
         let chunk_size = 30 * sample_rate; // 30 seconds
@@ -93,7 +97,7 @@ impl WhisperTranscriber {
             .enumerate()
             .map(|(i, chunk)| {
                 println!("🧵 Processing chunk {}/{}", i + 1, chunks.len());
-                self.transcribe_single(chunk)
+                self.transcribe_single(chunk, prompt)
             })
             .collect();
 
@@ -103,7 +107,7 @@ impl WhisperTranscriber {
         Ok(transcripts.join(" "))
     }
 
-    fn create_params(&self) -> FullParams {
+    fn create_params(&self, prompt: Option<&str>) -> FullParams {
         // Setup transcription parameters - greedy decoding for speed
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
@@ -119,6 +123,11 @@ impl WhisperTranscriber {
         params.set_max_len(0);
         params.set_suppress_blank(true);
         params.set_suppress_non_speech_tokens(true);
+
+        // Add custom vocabulary as initial prompt to bias Whisper towards these words
+        if let Some(prompt_text) = prompt {
+            params.set_initial_prompt(prompt_text);
+        }
 
         params
     }

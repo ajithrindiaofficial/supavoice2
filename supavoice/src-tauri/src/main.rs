@@ -461,6 +461,29 @@ async fn set_active_llm_model(
 }
 
 #[tauri::command]
+async fn add_vocabulary_word(state: State<'_, AppState>, word: String) -> Result<(), String> {
+    state
+        .preferences
+        .add_vocabulary_word(word)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn remove_vocabulary_word(state: State<'_, AppState>, word: String) -> Result<(), String> {
+    state
+        .preferences
+        .remove_vocabulary_word(word)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_vocabulary(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    Ok(state.preferences.get_vocabulary().await)
+}
+
+#[tauri::command]
 async fn get_disk_space() -> Result<u64, String> {
     // Get free disk space (basic implementation)
     #[cfg(target_os = "macos")]
@@ -615,6 +638,16 @@ async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Res
 
     let model_path = model.path.ok_or("Model not installed")?;
 
+    // Build prompt from custom vocabulary first (before locking cache)
+    let vocabulary = state.preferences.get_vocabulary().await;
+    let prompt = if !vocabulary.is_empty() {
+        let prompt_text = format!("Custom vocabulary: {}", vocabulary.join(", "));
+        println!("📚 Using custom vocabulary: {}", prompt_text);
+        Some(prompt_text)
+    } else {
+        None
+    };
+
     // Check if model is already cached
     let mut cache = state.transcriber_cache.lock().unwrap();
 
@@ -629,9 +662,16 @@ async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Res
     }
 
     let transcriber = cache.as_ref().unwrap();
-    let result = transcriber
-        .transcribe(&audio_path)
-        .map_err(|e| e.to_string())?;
+
+    let result = if let Some(prompt_text) = &prompt {
+        transcriber
+            .transcribe_with_prompt(&audio_path, Some(prompt_text))
+            .map_err(|e| e.to_string())?
+    } else {
+        transcriber
+            .transcribe(&audio_path)
+            .map_err(|e| e.to_string())?
+    };
 
     Ok(result)
 }
@@ -927,6 +967,9 @@ fn main() {
             get_preferences,
             set_active_whisper_model,
             set_active_llm_model,
+            add_vocabulary_word,
+            remove_vocabulary_word,
+            get_vocabulary,
             start_recording,
             start_recording_toggle,
             stop_recording,

@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import { Label } from '../components/ui/label';
+import { Input } from '../components/ui/input';
 
 interface ModelRecord {
   id: string;
@@ -41,11 +42,14 @@ export default function Settings() {
     active_whisper_model: null,
     active_llm_model: null,
   });
+  const [vocabulary, setVocabulary] = useState<string[]>([]);
+  const [newWord, setNewWord] = useState<string>('');
 
   useEffect(() => {
     loadModels();
     loadDiskSpace();
     loadPreferences();
+    loadVocabulary();
 
     // Listen for download progress events
     const progressUnlisten = listen('download_progress', (event: any) => {
@@ -131,6 +135,36 @@ export default function Settings() {
     }
   };
 
+  const loadVocabulary = async () => {
+    try {
+      const vocab = await invoke<string[]>('get_vocabulary');
+      setVocabulary(vocab);
+    } catch (error) {
+      console.error('Failed to load vocabulary:', error);
+    }
+  };
+
+  const handleAddWord = async () => {
+    if (!newWord.trim()) return;
+
+    try {
+      await invoke('add_vocabulary_word', { word: newWord.trim() });
+      await loadVocabulary();
+      setNewWord('');
+    } catch (error) {
+      console.error('Failed to add word:', error);
+    }
+  };
+
+  const handleRemoveWord = async (word: string) => {
+    try {
+      await invoke('remove_vocabulary_word', { word });
+      await loadVocabulary();
+    } catch (error) {
+      console.error('Failed to remove word:', error);
+    }
+  };
+
   const handleDownload = async (modelId: string) => {
     try {
       await invoke('start_download', { modelId });
@@ -183,8 +217,9 @@ export default function Settings() {
       <Tabs defaultValue="models" className="w-full">
         <TabsList>
           <TabsTrigger value="models">Models</TabsTrigger>
-          <TabsTrigger value="api">API Keys</TabsTrigger>
+          <TabsTrigger value="vocabulary">Vocabulary</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
+          <TabsTrigger value="api">API Keys</TabsTrigger>
         </TabsList>
 
         <TabsContent value="models" className="space-y-4">
@@ -269,6 +304,57 @@ export default function Settings() {
                   </div>
                 </div>
               ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="vocabulary" className="space-y-4">
+          <div className="rounded-lg border p-6 space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold mb-2">Custom Vocabulary</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Add custom words, names, or jargon to improve transcription accuracy. Whisper will be biased toward recognizing these words.
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <Input
+                placeholder="Add a word or phrase..."
+                value={newWord}
+                onChange={(e) => setNewWord(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleAddWord();
+                  }
+                }}
+              />
+              <Button onClick={handleAddWord}>Add</Button>
+            </div>
+
+            <div className="space-y-2">
+              {vocabulary.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No custom vocabulary added yet. Add words above to get started.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {vocabulary.map((word) => (
+                    <div
+                      key={word}
+                      className="flex items-center justify-between rounded-lg border p-3"
+                    >
+                      <span className="font-medium">{word}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveWord(word)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </TabsContent>
 

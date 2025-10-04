@@ -126,7 +126,7 @@ export function Titlebar() {
           className="text-lg font-semibold text-foreground pointer-events-none"
           data-tauri-drag-region
         >
-          ajith-macos-starter
+          Supavoice 2.0
         </h1>
       </div>
 

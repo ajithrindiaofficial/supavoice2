@@ -8,6 +8,8 @@ use tokio::sync::RwLock;
 pub struct AppPreferences {
     pub active_whisper_model: Option<String>,
     pub active_llm_model: Option<String>,
+    #[serde(default)]
+    pub custom_vocabulary: Vec<String>,
 }
 
 impl Default for AppPreferences {
@@ -15,6 +17,7 @@ impl Default for AppPreferences {
         Self {
             active_whisper_model: None, // None means use auto-selection
             active_llm_model: None,
+            custom_vocabulary: Vec::new(),
         }
     }
 }
@@ -64,6 +67,27 @@ impl PreferencesManager {
         prefs.active_llm_model = model_id;
         self.save(&prefs).await?;
         Ok(())
+    }
+
+    pub async fn add_vocabulary_word(&self, word: String) -> Result<()> {
+        let mut prefs = self.preferences.write().await;
+        // Avoid duplicates
+        if !prefs.custom_vocabulary.contains(&word) {
+            prefs.custom_vocabulary.push(word);
+            self.save(&prefs).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn remove_vocabulary_word(&self, word: String) -> Result<()> {
+        let mut prefs = self.preferences.write().await;
+        prefs.custom_vocabulary.retain(|w| w != &word);
+        self.save(&prefs).await?;
+        Ok(())
+    }
+
+    pub async fn get_vocabulary(&self) -> Vec<String> {
+        self.preferences.read().await.custom_vocabulary.clone()
     }
 
     async fn save(&self, prefs: &AppPreferences) -> Result<()> {
