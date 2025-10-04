@@ -4,8 +4,10 @@
 mod audio;
 mod models;
 mod transcription;
+mod formatting;
 
 use audio::AudioRecorder;
+use formatting::LlmFormatter;
 use models::{ModelDownloader, ModelRecord, ModelRegistry};
 use std::sync::Arc;
 use tauri::{
@@ -266,6 +268,7 @@ struct AppState {
     registry: Arc<ModelRegistry>,
     downloader: Arc<ModelDownloader>,
     transcriber_cache: Arc<Mutex<Option<WhisperTranscriber>>>,
+    formatter_cache: Arc<Mutex<Option<LlmFormatter>>>,
     recording: Arc<Mutex<Option<RecordingState>>>,
 }
 
@@ -474,6 +477,60 @@ async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Res
     Ok(result)
 }
 
+#[tauri::command]
+async fn format_transcript(
+    state: State<'_, AppState>,
+    transcript: String,
+    format_type: String,
+) -> Result<String, String> {
+    // Priority order: gemma-2-2b-instruct (best instruction following), qwen2-1.5b-instruct
+    let model_id = if let Ok(model) = state.registry.get_model("gemma-2-2b-instruct").await {
+        if model.path.is_some() {
+            "gemma-2-2b-instruct"
+        } else if let Ok(model) = state.registry.get_model("qwen2-1.5b-instruct").await {
+            if model.path.is_some() {
+                "qwen2-1.5b-instruct"
+            } else {
+                return Err("No LLM model installed. Please install Gemma or Qwen model from Settings.".to_string());
+            }
+        } else {
+            return Err("No LLM model installed. Please install Gemma or Qwen model from Settings.".to_string());
+        }
+    } else {
+        return Err("No LLM model installed. Please install Gemma or Qwen model from Settings.".to_string());
+    };
+
+    let model = state
+        .registry
+        .get_model(model_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let model_path = model.path.ok_or("Model not installed")?;
+
+    // Check if formatter is already cached (just holds binary path, lightweight)
+    let mut cache = state.formatter_cache.lock().unwrap();
+
+    if cache.is_none() {
+        println!("🔄 Initializing LLM formatter (locating llama-cli binary)...");
+        let formatter = LlmFormatter::new()
+            .map_err(|e| e.to_string())?;
+        *cache = Some(formatter);
+        println!("✅ LLM formatter initialized!");
+    }
+
+    let formatter = cache.as_ref().unwrap();
+
+    let result = match format_type.as_str() {
+        "email" => formatter.format_as_email(&model_path, &transcript),
+        "notes" => formatter.format_as_notes(&model_path, &transcript),
+        _ => Err(anyhow::anyhow!("Unknown format type: {}", format_type)),
+    }
+    .map_err(|e| e.to_string())?;
+
+    Ok(result)
+}
+
 fn main() {
     let migrations = vec![
         Migration {
@@ -543,6 +600,7 @@ fn main() {
         registry,
         downloader,
         transcriber_cache,
+        formatter_cache: Arc::new(Mutex::new(None)),
         recording: Arc::new(Mutex::new(None)),
     };
 
@@ -645,7 +703,8 @@ fn main() {
             start_recording,
             start_recording_toggle,
             stop_recording,
-            transcribe_audio
+            transcribe_audio,
+            format_transcript
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -227,36 +227,76 @@ Update `src/App.tsx` (main overlay window):
 
 #### 4.1 LLM Integration Options
 
-**Option A: llama.cpp (via llama-cpp-rs) - RECOMMENDED for MVP**
-```toml
-llama-cpp-rs = { git = "https://github.com/rustformers/llama-cpp-rs" }
+**⚠️ GGML Backend Conflict Issue:**
+Both `whisper-rs` and all Rust GGML-based LLM libraries (`llm`, `llama-cpp-rs`, `llama-cpp-2`) use different versions of the GGML backend, causing compilation conflicts when used together in the same process.
+
+**Solution: Separate Process Architecture**
+- Use llama.cpp CLI binary as a separate process
+- Communicate via stdin/stdout or temp files
+- Avoids GGML version conflicts
+- Still fully offline and performant
+
+**Implementation Approach:**
+1. Download/bundle llama.cpp pre-built binary for the target platform
+2. Store in app resources or download on first run
+3. Invoke via `std::process::Command` with model path and prompt
+4. Parse output and return to frontend
+
+**Why this approach:**
+- ✅ No GGML conflicts - completely isolated processes
+- ✅ Uses official llama.cpp (best performance, Metal support)
+- ✅ Fully offline - no API calls
+- ✅ Easy to update llama.cpp independently
+- ✅ Can use any GGUF model without Rust binding issues
+- ⚠️ Slightly slower first call (process spawn overhead ~100ms)
+- ⚠️ Need to bundle/download binary for each platform
+
+**File: `formatting/llm_formatter.rs`**
+```rust
+use std::process::{Command, Stdio};
+use std::io::Write;
+
+pub struct LlmFormatter {
+    llama_binary_path: PathBuf,
+}
+
+impl LlmFormatter {
+    pub fn format_with_llama_cpp(
+        &self,
+        model_path: &Path,
+        prompt: &str,
+    ) -> Result<String> {
+        let mut child = Command::new(&self.llama_binary_path)
+            .arg("-m").arg(model_path)
+            .arg("-p").arg(prompt)
+            .arg("-n").arg("512")  // max tokens
+            .arg("--temp").arg("0.7")
+            .arg("-ngl").arg("1")  // GPU layers (Metal on macOS)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        let output = child.wait_with_output()?;
+        let result = String::from_utf8_lossy(&output.stdout);
+
+        Ok(result.trim().to_string())
+    }
+}
 ```
-- ✅ Uses GGUF quantized models (smaller, faster)
-- ✅ Best performance for LLMs (highly optimized C++)
-- ✅ JSON-schema constrained decoding support
-- ✅ Metal/CUDA acceleration
-- ⚠️ C++ dependency (requires compilation)
 
-**Option B: Candle (pure Rust, experimental for LLMs)**
-- ✅ Pure Rust, consistent with Whisper implementation
-- ✅ Can load .safetensors models directly
-- ⚠️ LLM support less mature than whisper
-- ⚠️ No grammar/JSON-schema constraints yet
-- ⚠️ Slower inference than llama.cpp
-
-**Decision: Use llama.cpp for Phase 4** - Better performance and proven stability for LLM inference.
-
-**File: `formatting/llm.rs`**
+**Tauri Command:**
 ```rust
 #[tauri::command]
 async fn format_transcript(
     state: State<'_, AppState>,
     transcript: String,
-    template: String, // "email", "linkedin", "notes"
-) -> Result<FormattedOutput, String> {
-    // Load Gemma-2-2B-Instruct GGUF model via llama.cpp
-    // Use JSON-schema constrained decoding
-    // Return structured output
+    format_type: String, // "email" or "notes"
+) -> Result<String, String> {
+    // Get LLM model path (gemma or qwen)
+    // Build prompt based on format_type
+    // Call llama.cpp binary via subprocess
+    // Return formatted text
 }
 ```
 
