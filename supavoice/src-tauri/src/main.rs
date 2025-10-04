@@ -511,17 +511,22 @@ async fn get_disk_space() -> Result<u64, String> {
 
 #[tauri::command]
 async fn start_recording_toggle(state: State<'_, AppState>) -> Result<(), String> {
-    let desktop_dir = dirs::home_dir()
-        .ok_or("Could not find home directory")?
-        .join("Desktop");
+    // Use temp directory instead of Desktop to avoid cluttering user's Desktop
+    let temp_dir = std::env::temp_dir();
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let audio_path = desktop_dir.join(format!("supavoice_recording_{}.wav", timestamp));
+    let audio_path = temp_dir.join(format!("supavoice_recording_{}.wav", timestamp));
 
     println!("📍 Starting recording to: {:?}", audio_path);
+
+    // Commented out: Don't save to Desktop anymore
+    // let desktop_dir = dirs::home_dir()
+    //     .ok_or("Could not find home directory")?
+    //     .join("Desktop");
+    // let audio_path = desktop_dir.join(format!("supavoice_recording_{}.wav", timestamp));
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_clone = stop_flag.clone();
@@ -573,17 +578,22 @@ async fn stop_recording(state: State<'_, AppState>) -> Result<String, String> {
 // Keep old command for backwards compatibility
 #[tauri::command]
 async fn start_recording(duration: u64) -> Result<String, String> {
-    let desktop_dir = dirs::home_dir()
-        .ok_or("Could not find home directory")?
-        .join("Desktop");
+    // Use temp directory instead of Desktop
+    let temp_dir = std::env::temp_dir();
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let audio_path = desktop_dir.join(format!("supavoice_recording_{}.wav", timestamp));
+    let audio_path = temp_dir.join(format!("supavoice_recording_{}.wav", timestamp));
 
     println!("Recording to: {:?}", audio_path);
+
+    // Commented out: Don't save to Desktop anymore
+    // let desktop_dir = dirs::home_dir()
+    //     .ok_or("Could not find home directory")?
+    //     .join("Desktop");
+    // let audio_path = desktop_dir.join(format!("supavoice_recording_{}.wav", timestamp));
 
     let recorder = AudioRecorder::new();
     recorder
