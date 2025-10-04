@@ -5,10 +5,12 @@ mod audio;
 mod models;
 mod transcription;
 mod formatting;
+mod preferences;
 
 use audio::AudioRecorder;
 use formatting::LlmFormatter;
 use models::{ModelDownloader, ModelRecord, ModelRegistry};
+use preferences::{AppPreferences, PreferencesManager};
 use std::sync::Arc;
 use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -270,6 +272,7 @@ struct AppState {
     transcriber_cache: Arc<Mutex<Option<WhisperTranscriber>>>,
     formatter_cache: Arc<Mutex<Option<Arc<LlmFormatter>>>>,
     recording: Arc<Mutex<Option<RecordingState>>>,
+    preferences: Arc<PreferencesManager>,
 }
 
 #[tauri::command]
@@ -315,6 +318,146 @@ async fn delete_model(state: State<'_, AppState>, model_id: String) -> Result<()
         .delete_model(model_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_preferences(state: State<'_, AppState>) -> Result<AppPreferences, String> {
+    Ok(state.preferences.get_preferences().await)
+}
+
+#[tauri::command]
+async fn set_active_whisper_model(
+    state: State<'_, AppState>,
+    model_id: Option<String>,
+) -> Result<(), String> {
+    // Save preference first
+    state
+        .preferences
+        .set_active_whisper_model(model_id.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Clear the cached transcriber
+    {
+        let mut cache = state.transcriber_cache.lock().unwrap();
+        *cache = None;
+        println!("🔄 Cleared Whisper model cache due to preference change");
+    }
+
+    // Preload the new model in background
+    let registry_clone = state.registry.clone();
+    let cache_clone = state.transcriber_cache.clone();
+    let model_id_clone = model_id.clone();
+
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let selected_model_id = if let Some(id) = model_id_clone {
+            // User selected a specific model
+            Some(id)
+        } else {
+            // Auto mode - use priority order
+            runtime.block_on(async {
+                if let Ok(model) = registry_clone.get_model("whisper-base-en").await {
+                    if model.path.is_some() { return Some("whisper-base-en".to_string()); }
+                }
+                if let Ok(model) = registry_clone.get_model("whisper-small-en").await {
+                    if model.path.is_some() { return Some("whisper-small-en".to_string()); }
+                }
+                if let Ok(model) = registry_clone.get_model("whisper-small").await {
+                    if model.path.is_some() { return Some("whisper-small".to_string()); }
+                }
+                None
+            })
+        };
+
+        if let Some(id) = selected_model_id {
+            if let Ok(model) = runtime.block_on(registry_clone.get_model(&id)) {
+                if let Some(path) = model.path {
+                    println!("📦 Preloading new Whisper model: {}", id);
+                    match WhisperTranscriber::new(path) {
+                        Ok(transcriber) => {
+                            *cache_clone.lock().unwrap() = Some(transcriber);
+                            println!("✅ New Whisper model preloaded!");
+                        }
+                        Err(e) => println!("⚠️  Failed to preload model: {}", e),
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_active_llm_model(
+    state: State<'_, AppState>,
+    model_id: Option<String>,
+) -> Result<(), String> {
+    // Save preference first
+    state
+        .preferences
+        .set_active_llm_model(model_id.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Clear the cached formatter
+    {
+        let mut cache = state.formatter_cache.lock().unwrap();
+        *cache = None;
+        println!("🔄 Cleared LLM formatter cache due to preference change");
+    }
+
+    // Preload the new model in background
+    let registry_clone = state.registry.clone();
+    let cache_clone = state.formatter_cache.clone();
+    let model_id_clone = model_id.clone();
+
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let selected_model = if let Some(id) = model_id_clone {
+            // User selected a specific model
+            runtime.block_on(async {
+                if let Ok(model) = registry_clone.get_model(&id).await {
+                    if model.path.is_some() { Some(model) } else { None }
+                } else {
+                    None
+                }
+            })
+        } else {
+            // Auto mode - use priority order
+            runtime.block_on(async {
+                if let Ok(model) = registry_clone.get_model("gemma-2-2b-instruct").await {
+                    if model.path.is_some() { return Some(model); }
+                }
+                if let Ok(model) = registry_clone.get_model("qwen2-1.5b-instruct").await {
+                    if model.path.is_some() { return Some(model); }
+                }
+                None
+            })
+        };
+
+        if let Some(model) = selected_model {
+            if let Some(model_path) = model.path {
+                println!("📦 Starting LLM server with new model: {}", model.id);
+                match LlmFormatter::new() {
+                    Ok(formatter) => {
+                        if let Err(e) = formatter.start_server_if_needed(&model_path) {
+                            println!("⚠️  Failed to start LLM server: {}", e);
+                        } else {
+                            *cache_clone.lock().unwrap() = Some(Arc::new(formatter));
+                            println!("✅ New LLM model preloaded!");
+                        }
+                    }
+                    Err(e) => println!("⚠️  Failed to initialize LLM formatter: {}", e),
+                }
+            }
+        }
+    });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -431,26 +574,42 @@ async fn start_recording(duration: u64) -> Result<String, String> {
 
 #[tauri::command]
 async fn transcribe_audio(state: State<'_, AppState>, audio_path: String) -> Result<String, String> {
-    // Priority order: whisper-base-en (fastest), small-en, small (multilingual)
-    let model_id = if let Ok(model) = state.registry.get_model("whisper-base-en").await {
-        if model.path.is_some() {
-            "whisper-base-en"
-        } else if let Ok(model) = state.registry.get_model("whisper-small-en").await {
+    // Check user preference first
+    let prefs = state.preferences.get_preferences().await;
+
+    let model_id = if let Some(preferred_model) = prefs.active_whisper_model {
+        // Use user's preferred model if it's installed
+        if let Ok(model) = state.registry.get_model(&preferred_model).await {
             if model.path.is_some() {
-                "whisper-small-en"
+                preferred_model
             } else {
-                "whisper-small"
+                return Err(format!("Selected model '{}' is not installed", preferred_model));
             }
         } else {
-            "whisper-small"
+            return Err(format!("Selected model '{}' not found", preferred_model));
         }
     } else {
-        "whisper-base-en"
+        // Auto-select: Priority order: whisper-base-en (fastest), small-en, small (multilingual)
+        if let Ok(model) = state.registry.get_model("whisper-base-en").await {
+            if model.path.is_some() {
+                "whisper-base-en".to_string()
+            } else if let Ok(model) = state.registry.get_model("whisper-small-en").await {
+                if model.path.is_some() {
+                    "whisper-small-en".to_string()
+                } else {
+                    "whisper-small".to_string()
+                }
+            } else {
+                "whisper-small".to_string()
+            }
+        } else {
+            "whisper-base-en".to_string()
+        }
     };
 
     let model = state
         .registry
-        .get_model(model_id)
+        .get_model(&model_id)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -483,26 +642,42 @@ async fn format_transcript(
     transcript: String,
     format_type: String,
 ) -> Result<String, String> {
-    // Priority order: gemma-2-2b-instruct (best instruction following), qwen2-1.5b-instruct
-    let model_id = if let Ok(model) = state.registry.get_model("gemma-2-2b-instruct").await {
-        if model.path.is_some() {
-            "gemma-2-2b-instruct"
-        } else if let Ok(model) = state.registry.get_model("qwen2-1.5b-instruct").await {
+    // Check user preference first
+    let prefs = state.preferences.get_preferences().await;
+
+    let model_id = if let Some(preferred_model) = prefs.active_llm_model {
+        // Use user's preferred model if it's installed
+        if let Ok(model) = state.registry.get_model(&preferred_model).await {
             if model.path.is_some() {
-                "qwen2-1.5b-instruct"
+                preferred_model
+            } else {
+                return Err(format!("Selected LLM model '{}' is not installed", preferred_model));
+            }
+        } else {
+            return Err(format!("Selected LLM model '{}' not found", preferred_model));
+        }
+    } else {
+        // Auto-select: Priority order: gemma-2-2b-instruct > qwen2-1.5b-instruct
+        if let Ok(model) = state.registry.get_model("gemma-2-2b-instruct").await {
+            if model.path.is_some() {
+                "gemma-2-2b-instruct".to_string()
+            } else if let Ok(model) = state.registry.get_model("qwen2-1.5b-instruct").await {
+                if model.path.is_some() {
+                    "qwen2-1.5b-instruct".to_string()
+                } else {
+                    return Err("No LLM model installed. Please install Gemma or Qwen model from Settings.".to_string());
+                }
             } else {
                 return Err("No LLM model installed. Please install Gemma or Qwen model from Settings.".to_string());
             }
         } else {
             return Err("No LLM model installed. Please install Gemma or Qwen model from Settings.".to_string());
         }
-    } else {
-        return Err("No LLM model installed. Please install Gemma or Qwen model from Settings.".to_string());
     };
 
     let model = state
         .registry
-        .get_model(model_id)
+        .get_model(&model_id)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -556,6 +731,7 @@ fn main() {
     // Initialize model registry and downloader
     let registry = Arc::new(ModelRegistry::new().expect("Failed to initialize model registry"));
     let downloader = Arc::new(ModelDownloader::new(registry.clone()));
+    let preferences = Arc::new(PreferencesManager::new().expect("Failed to initialize preferences"));
 
     // Preload Whisper model on startup
     let transcriber_cache = Arc::new(Mutex::new(None));
@@ -649,6 +825,7 @@ fn main() {
         transcriber_cache,
         formatter_cache,
         recording: Arc::new(Mutex::new(None)),
+        preferences,
     };
 
     tauri::Builder::default()
@@ -747,6 +924,9 @@ fn main() {
             start_download,
             delete_model,
             get_disk_space,
+            get_preferences,
+            set_active_whisper_model,
+            set_active_llm_model,
             start_recording,
             start_recording_toggle,
             stop_recording,

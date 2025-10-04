@@ -3,6 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
+import { Label } from '../components/ui/label';
 
 interface ModelRecord {
   id: string;
@@ -21,13 +29,23 @@ type ModelStatus =
   | 'Installed'
   | { Failed: { error: string } };
 
+interface AppPreferences {
+  active_whisper_model: string | null;
+  active_llm_model: string | null;
+}
+
 export default function Settings() {
   const [models, setModels] = useState<ModelRecord[]>([]);
   const [diskSpace, setDiskSpace] = useState<number>(0);
+  const [preferences, setPreferences] = useState<AppPreferences>({
+    active_whisper_model: null,
+    active_llm_model: null,
+  });
 
   useEffect(() => {
     loadModels();
     loadDiskSpace();
+    loadPreferences();
 
     // Listen for download progress events
     const progressUnlisten = listen('download_progress', (event: any) => {
@@ -81,6 +99,35 @@ export default function Settings() {
       setDiskSpace(space);
     } catch (error) {
       console.error('Failed to get disk space:', error);
+    }
+  };
+
+  const loadPreferences = async () => {
+    try {
+      const prefs = await invoke<AppPreferences>('get_preferences');
+      setPreferences(prefs);
+    } catch (error) {
+      console.error('Failed to load preferences:', error);
+    }
+  };
+
+  const handleWhisperModelChange = async (value: string) => {
+    try {
+      const modelId = value === 'auto' ? null : value;
+      await invoke('set_active_whisper_model', { modelId });
+      setPreferences((prev) => ({ ...prev, active_whisper_model: modelId }));
+    } catch (error) {
+      console.error('Failed to set Whisper model:', error);
+    }
+  };
+
+  const handleLlmModelChange = async (value: string) => {
+    try {
+      const modelId = value === 'auto' ? null : value;
+      await invoke('set_active_llm_model', { modelId });
+      setPreferences((prev) => ({ ...prev, active_llm_model: modelId }));
+    } catch (error) {
+      console.error('Failed to set LLM model:', error);
     }
   };
 
@@ -233,11 +280,59 @@ export default function Settings() {
           </div>
         </TabsContent>
 
-        <TabsContent value="preferences">
-          <div className="rounded-lg border p-4">
-            <p className="text-sm text-muted-foreground">
-              Preferences configuration coming soon...
-            </p>
+        <TabsContent value="preferences" className="space-y-6">
+          <div className="rounded-lg border p-6 space-y-6">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="whisper-model">Active Whisper Model</Label>
+                <Select
+                  value={preferences.active_whisper_model || 'auto'}
+                  onValueChange={handleWhisperModelChange}
+                >
+                  <SelectTrigger id="whisper-model">
+                    <SelectValue placeholder="Select Whisper model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (Recommended)</SelectItem>
+                    {models
+                      .filter((m) => m.kind === 'Whisper' && isInstalled(m.status))
+                      .map((model) => (
+                        <SelectItem key={model.id} value={model.id}>
+                          {model.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  Auto mode prioritizes: base-en → small-en → small (multilingual)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="llm-model">Active LLM Model</Label>
+                <Select
+                  value={preferences.active_llm_model || 'auto'}
+                  onValueChange={handleLlmModelChange}
+                >
+                  <SelectTrigger id="llm-model">
+                    <SelectValue placeholder="Select LLM model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (Recommended)</SelectItem>
+                    {models
+                      .filter((m) => m.kind === 'LLM' && isInstalled(m.status))
+                      .map((model) => (
+                        <SelectItem key={model.id} value={model.id}>
+                          {model.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  Auto mode prioritizes: gemma-2-2b → qwen2-1.5b
+                </p>
+              </div>
+            </div>
           </div>
         </TabsContent>
       </Tabs>
